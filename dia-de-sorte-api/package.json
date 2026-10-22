@@ -1,0 +1,39 @@
+{
+  "name": "dia-de-sorte-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "import:demo": "tsx scripts/import-demo.ts",
+    "result:demo": "tsx scripts/register-result.ts",
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "prisma:deploy": "prisma migrate deploy",
+    "tickets:audit": "node scripts/audit-ticket-numbers.cjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/adapter-pg": "^7.0.0",
+    "@prisma/client": "^7.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "dotenv": "^17.0.0",
+    "pg": "^8.16.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
+    "@types/node": "^22.0.0",
+    "prisma": "^7.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}

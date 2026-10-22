@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: sorteio
+      POSTGRES_PASSWORD: local_only_change_me
+      POSTGRES_DB: dia_de_sorte
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sorteio -d dia_de_sorte"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata:

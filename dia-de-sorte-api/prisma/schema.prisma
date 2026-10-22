@@ -1,0 +1,140 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CampaignStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+enum TicketStatus {
+  AVAILABLE
+  ASSIGNED_DEMO
+  VOID
+}
+
+enum DrawStatus {
+  PENDING
+  RECORDED
+  REVIEWED
+}
+
+model Organization {
+  id        String     @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime   @default(now())
+  campaigns Campaign[]
+}
+
+model Campaign {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  name           String
+  status         CampaignStatus @default(DRAFT)
+  ticketPriceCents Int          @default(200)
+  rulesVersion   String         @default("draft-v1")
+  closesAt       DateTime?
+  createdAt      DateTime       @default(now())
+  tickets        Ticket[]
+  draws          Draw[]
+  demoOrders     DemoOrder[]
+  drawChecks     DrawCheck[]
+  @@index([organizationId, status])
+}
+
+model Ticket {
+  id         String       @id @default(uuid()) @db.Uuid
+  campaignId String       @db.Uuid
+  campaign   Campaign     @relation(fields: [campaignId], references: [id])
+  serial     String
+  status     TicketStatus @default(AVAILABLE)
+  demoOrderId String?     @db.Uuid
+  demoOrder  DemoOrder?   @relation(fields: [demoOrderId], references: [id])
+  numbers    TicketNumber[]
+  matches    TicketMatch[]
+  createdAt  DateTime     @default(now())
+  assignedAt DateTime?
+  @@unique([campaignId, serial])
+  @@unique([id, campaignId])
+  @@index([campaignId, status])
+}
+
+model TicketNumber {
+  id       String @id @default(uuid()) @db.Uuid
+  ticketId String @db.Uuid
+  campaignId String @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId, campaignId], references: [id, campaignId], onDelete: Cascade)
+  position Int
+  value    String @db.Char(4)
+  @@unique([ticketId, position])
+  @@unique([campaignId, value])
+  @@unique([ticketId, value])
+  @@index([value])
+}
+
+// Immutable administrative observation; this does not authorize a prize.
+model DrawCheck {
+  id String @id @default(uuid()) @db.Uuid
+  campaignId String @db.Uuid
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  reference String
+  number String @db.VarChar(4)
+  actor String
+  snapshot Json
+  createdAt DateTime @default(now())
+  @@unique([campaignId, reference])
+  @@index([campaignId, createdAt])
+}
+
+model DemoOrder {
+  id            String   @id @default(uuid()) @db.Uuid
+  campaignId    String   @db.Uuid
+  campaign      Campaign @relation(fields: [campaignId], references: [id])
+  quantity      Int
+  totalCents    Int
+  createdAt     DateTime @default(now())
+  tickets       Ticket[]
+}
+
+model Draw {
+  id         String      @id @default(uuid()) @db.Uuid
+  campaignId String      @db.Uuid
+  campaign   Campaign    @relation(fields: [campaignId], references: [id])
+  reference  String
+  sourceUrl  String?
+  status     DrawStatus  @default(PENDING)
+  createdAt  DateTime    @default(now())
+  results    DrawResult[]
+  matches    TicketMatch[]
+  @@unique([campaignId, reference])
+}
+
+model DrawResult {
+  id       String @id @default(uuid()) @db.Uuid
+  drawId   String @db.Uuid
+  draw     Draw   @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  position Int
+  number   String @db.Char(4)
+  @@unique([drawId, position])
+}
+
+model TicketMatch {
+  id       String @id @default(uuid()) @db.Uuid
+  drawId   String @db.Uuid
+  draw     Draw   @relation(fields: [drawId], references: [id])
+  ticketId String @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId], references: [id])
+  number   String @db.Char(4)
+  verified Boolean @default(false)
+  @@unique([drawId, ticketId, number])
+  @@index([drawId])
+}
