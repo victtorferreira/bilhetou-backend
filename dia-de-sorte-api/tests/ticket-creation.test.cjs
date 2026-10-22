@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { generateTickets } = require('../dist/tickets/ticket-generator');
-const { AdminAuth } = require('../dist/tickets/admin-auth');
+const { AdminAuth, AdminSessionStore } = require('../dist/tickets/admin-auth');
 const { allowedOrigins } = require('../dist/security/origins');
 
 test('generator validates quantities and serial prefixes', () => {
@@ -45,7 +45,7 @@ test('production permits only configured origins and administration rejects anon
     process.env.NODE_ENV = 'production'; process.env.FRONTEND_ORIGIN = 'https://bilhetou.vercel.app';
     assert.deepEqual(allowedOrigins(), ['https://bilhetou.vercel.app']);
     const context = { switchToHttp: () => ({ getRequest: () => ({ headers: {} }) }) };
-    assert.throws(() => new AdminAuth().canActivate(context));
+    assert.throws(() => new AdminAuth(new AdminSessionStore()).canActivate(context));
   } finally {
     if (previous.node === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous.node;
     if (previous.origin === undefined) delete process.env.FRONTEND_ORIGIN; else process.env.FRONTEND_ORIGIN = previous.origin;

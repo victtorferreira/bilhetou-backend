@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { validateImport } = require('../dist/tickets/ticket-import');
 const { generateTickets } = require('../dist/tickets/ticket-generator');
 const { AdminTicketService } = require('../dist/tickets/admin-ticket.service');
-const { AdminAuth } = require('../dist/tickets/admin-auth');
+const { AdminAuth, AdminSessionStore } = require('../dist/tickets/admin-auth');
 const row = (serial = 'DS000001', numbers = ['0038', '1123', '6789', '9876']) => ({ serial, numbers });
 
 test('four unique strings preserve leading zeros', () => {
@@ -64,7 +64,7 @@ test('administrator credential creates a server session; forged cookie fails', (
   const previous = { key: process.env.ADMIN_ACCESS_KEY, org: process.env.ADMIN_ORGANIZATION_ID };
   try {
     process.env.ADMIN_ACCESS_KEY = 'a'.repeat(40); process.env.ADMIN_ORGANIZATION_ID = randomUUID();
-    const auth = new AdminAuth();
+    const auth = new AdminAuth(new AdminSessionStore());
     assert.throws(() => auth.login('wrong', 'test'));
     const token = auth.login('a'.repeat(40), 'test');
     const req = { headers: { cookie: `bilhetou_admin=${token}` } };
