@@ -43,12 +43,12 @@ test('expired sessions are cleared from view, and tickets reject unauthenticated
   await assert.rejects(service.tickets(undefined, 1, '', false), UnauthorizedException);
 });
 test('session from another organization cannot retrieve participant results', async () => {
-  const previous = process.env.DEMO_ORGANIZATION_ID;
-  process.env.DEMO_ORGANIZATION_ID = 'ORG-A';
+  const previous = process.env.PUBLIC_ORGANIZATION_ID;
+  process.env.PUBLIC_ORGANIZATION_ID = 'ORG-A';
   try {
     const service = new ParticipantService({ participantSession: { findUnique: async () => ({ expiresAt: new Date(Date.now() + 60000), participant: { organizationId: 'ORG-B' } }) } });
     await assert.rejects(service.results('a'.repeat(64)), UnauthorizedException);
-  } finally { if (previous === undefined) delete process.env.DEMO_ORGANIZATION_ID; else process.env.DEMO_ORGANIZATION_ID = previous; }
+  } finally { if (previous === undefined) delete process.env.PUBLIC_ORGANIZATION_ID; else process.env.PUBLIC_ORGANIZATION_ID = previous; }
 });
 test('logout deletes only the current hashed token, never stores the bearer token', async () => {
   let where;
@@ -58,8 +58,8 @@ test('logout deletes only the current hashed token, never stores the bearer toke
   assert.notEqual(where.tokenHash, 'a'.repeat(64));
 });
 test('confirmation replay is scoped to participant and never assigns stock twice', async () => {
-  const previous = process.env.DEMO_ORGANIZATION_ID;
-  process.env.DEMO_ORGANIZATION_ID = 'ORG';
+  const previous = process.env.PUBLIC_ORGANIZATION_ID;
+  process.env.PUBLIC_ORGANIZATION_ID = 'ORG';
   try {
     const session = { id: randomUUID(), participantId: 'PERSON', participant: { id: 'PERSON', organizationId: 'ORG', name: 'Maria Silva', phone: '98999999999' }, expiresAt: new Date(Date.now() + 60000), campaignId: null, selectedIds: [], selectionKey: randomUUID() };
     const key = randomUUID();
@@ -67,7 +67,7 @@ test('confirmation replay is scoped to participant and never assigns stock twice
     const service = new ParticipantService({ $transaction: async cb => cb(tx) });
     const result = await service.confirm('a'.repeat(64), key);
     assert.equal(result.participant.id, 'PERSON');
-  } finally { if (previous === undefined) delete process.env.DEMO_ORGANIZATION_ID; else process.env.DEMO_ORGANIZATION_ID = previous; }
+  } finally { if (previous === undefined) delete process.env.PUBLIC_ORGANIZATION_ID; else process.env.PUBLIC_ORGANIZATION_ID = previous; }
 });
 test('HTTP exposes session routes and validates registration DTOs without touching a real database', async () => {
   const { Module, ValidationPipe } = require('@nestjs/common');
@@ -95,8 +95,8 @@ test('PostgreSQL: registration, scoped stock, concurrent confirmation replay and
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.TEST_DATABASE_URL }) });
   const service = new ParticipantService(prisma);
   const org = await prisma.organization.create({ data: { name: 'Participant TEST' } });
-  const previous = { org: process.env.DEMO_ORGANIZATION_ID, campaign: process.env.PUBLIC_CAMPAIGN_ID };
-  process.env.DEMO_ORGANIZATION_ID = org.id; delete process.env.PUBLIC_CAMPAIGN_ID;
+  const previous = { org: process.env.PUBLIC_ORGANIZATION_ID, campaign: process.env.PUBLIC_CAMPAIGN_ID };
+  process.env.PUBLIC_ORGANIZATION_ID = org.id; delete process.env.PUBLIC_CAMPAIGN_ID;
   let campaign;
   try {
     campaign = await prisma.campaign.create({ data: { organizationId: org.id, name: 'Participant TEST', rulesVersion: 'demo-test', status: 'OPEN' } });
@@ -117,7 +117,7 @@ test('PostgreSQL: registration, scoped stock, concurrent confirmation replay and
     assert.equal(await prisma.demoOrder.count({ where: { participantId: a.state.participant.id } }), 1);
     await service.logout(a.token); assert.equal((await service.current(a.token)).participant, null);
   } finally {
-    if (previous.org === undefined) delete process.env.DEMO_ORGANIZATION_ID; else process.env.DEMO_ORGANIZATION_ID = previous.org;
+    if (previous.org === undefined) delete process.env.PUBLIC_ORGANIZATION_ID; else process.env.PUBLIC_ORGANIZATION_ID = previous.org;
     if (previous.campaign === undefined) delete process.env.PUBLIC_CAMPAIGN_ID; else process.env.PUBLIC_CAMPAIGN_ID = previous.campaign;
     const participants = await prisma.demoParticipant.findMany({ where: { organizationId: org.id }, select: { id: true } });
     const ids = participants.map(p => p.id);

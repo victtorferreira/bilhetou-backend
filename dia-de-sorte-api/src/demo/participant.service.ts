@@ -21,7 +21,7 @@ type Ticket = Prisma.TicketGetPayload<{ include: typeof numbers }>;
 @Injectable()
 export class ParticipantService {
   constructor(private readonly prisma: PrismaService) {}
-  private organizationId() { return process.env.DEMO_ORGANIZATION_ID || process.env.ADMIN_ORGANIZATION_ID || null; }
+  private organizationId() { return process.env.PUBLIC_ORGANIZATION_ID || process.env.ADMIN_ORGANIZATION_ID || null; }
   private hash(token: string) { return createHash('sha256').update(token).digest('hex'); }
   token(cookie?: string) { return cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('bilhetou_participant='))?.slice('bilhetou_participant='.length); }
   cookie(token: string, logout = false) {

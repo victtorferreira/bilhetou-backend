@@ -6,8 +6,8 @@ import { generateTickets } from '../src/tickets/ticket-generator';
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 async function main() {
-  const organizationId = process.env.DEMO_ORGANIZATION_ID || process.env.ADMIN_ORGANIZATION_ID;
-  if (!organizationId || !isUUID(organizationId)) throw new Error('Configure DEMO_ORGANIZATION_ID com um UUID antes de preparar a demonstração.');
+  const organizationId = process.env.PUBLIC_ORGANIZATION_ID || process.env.ADMIN_ORGANIZATION_ID;
+  if (!organizationId || !isUUID(organizationId)) throw new Error('Configure PUBLIC_ORGANIZATION_ID com um UUID antes de preparar a demonstração.');
   const quantity = Number(process.env.DEMO_SETUP_TICKETS || 20);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) throw new Error('DEMO_SETUP_TICKETS deve estar entre 1 e 1000.');
   const result = await prisma.$transaction(async tx => {
