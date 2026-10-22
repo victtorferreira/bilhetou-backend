@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt, IsOptional, IsString, Matches, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsISO8601, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+export class CreateCampaignDto {
+  @IsString() @MinLength(3) @MaxLength(120) name!: string;
+  @IsInt() @Min(1) @Max(100000000) ticketPriceCents!: number;
+  @IsOptional() @IsInt() @Min(0) @Max(2000000000) prizeCents?: number;
+  @IsIn(['DRAFT', 'OPEN']) status!: 'DRAFT' | 'OPEN';
+  @IsOptional() @IsISO8601() closesAt?: string;
+}
 export class AdminLoginDto { @IsString() @MaxLength(512) secret!: string; }
 export class ImportRowDto {
   @IsString() @MaxLength(100) serial!: string;

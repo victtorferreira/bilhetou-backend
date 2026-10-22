@@ -22,45 +22,24 @@ export class TicketCreationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  listCampaigns() {
-    return this.prisma.campaign.findMany({
-      where: { rulesVersion: { startsWith: 'demo-' }, status: { in: ['DRAFT', 'OPEN'] } },
-      select: { id: true, name: true, status: true, _count: { select: { tickets: true } } },
-      orderBy: { createdAt: 'desc' }, take: 100,
-    });
-  }
-
-  private async eligibleCampaign(tx: Prisma.TransactionClient, campaignId: string, organizationId?: string) {
+  private async eligibleCampaign(tx: Prisma.TransactionClient, campaignId: string, organizationId: string) {
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
-    if (!campaign || (organizationId && campaign.organizationId !== organizationId)) throw new NotFoundException('Campanha não encontrada.');
-    if (!organizationId && !campaign.rulesVersion.startsWith('demo-')) throw new ConflictException('Use uma campanha explicitamente demonstrativa (rulesVersion demo-*).');
+    if (!campaign || campaign.organizationId !== organizationId || campaign.legacySample) throw new NotFoundException('Campanha não encontrada.');
     if (!['DRAFT', 'OPEN'].includes(campaign.status) || (campaign.closesAt && campaign.closesAt <= new Date())) throw new ConflictException('A campanha está encerrada ou indisponível.');
     return campaign;
   }
 
-  async listTickets(campaignId: string, page: number, query: string) {
-    return this.prisma.$transaction(async tx => {
-      await this.eligibleCampaign(tx, campaignId);
-      const where = { campaignId, serial: { contains: query.trim(), mode: 'insensitive' as const } };
-      const total = await tx.ticket.count({ where });
-      const totalPages = Math.max(1, Math.ceil(total / 20));
-      const current = Math.min(page, totalPages);
-      const items = await tx.ticket.findMany({ where, skip: (current - 1) * 20, take: 20, orderBy: [{ createdAt: 'desc' }, { serial: 'asc' }], select: { id: true, serial: true, status: true, numbers: { select: { position: true, value: true }, orderBy: { position: 'asc' } } } });
-      return { demoOnly: true, items, total, page: current, totalPages };
-    });
-  }
-
-  async preview(campaignId: string, input: GenerationInput, organizationId?: string) {
+  async preview(campaignId: string, input: GenerationInput, organizationId: string) {
     const tickets = await this.prisma.$transaction(async tx => {
       await this.eligibleCampaign(tx, campaignId, organizationId);
-      if (await tx.ticket.count({ where: { campaignId } }) + input.quantity > 2500) throw new ConflictException('Limite de 2.500 bilhetes demonstrativos por campanha.');
+      if (await tx.ticket.count({ where: { campaignId } }) + input.quantity > 2500) throw new ConflictException('Limite de 2.500 bilhetes por campanha.');
       const stock = await tx.ticket.findMany({ where: { campaignId }, select: { serial: true, numbers: { select: { value: true } } } });
       return generateTickets(input, stock);
     });
     const payload: PreviewPayload = { version: 1, batchId: randomUUID(), campaignId, uniqueNumbers: true, expiresAt: Date.now() + 15 * 60 * 1000, tickets };
     const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
     const signature = createHmac('sha256', this.signingKey).update(encoded).digest('base64url');
-    return { demoOnly: true, token: `${encoded}.${signature}`, batchId: payload.batchId, campaignId, expiresAt: new Date(payload.expiresAt).toISOString(), tickets };
+    return { token: `${encoded}.${signature}`, batchId: payload.batchId, campaignId, expiresAt: new Date(payload.expiresAt).toISOString(), tickets };
   }
 
   private decode(token: string): PreviewPayload {
@@ -78,7 +57,7 @@ export class TicketCreationService {
     return payload;
   }
 
-  async confirm(token: string, organizationId?: string) {
+  async confirm(token: string, organizationId: string) {
     const payload = this.decode(token);
     try { return await this.prisma.$transaction(async tx => {
       // Serialize all confirmations for this campaign. Parameters stay bound, never
@@ -87,9 +66,9 @@ export class TicketCreationService {
       await this.eligibleCampaign(tx, payload.campaignId, organizationId);
       const ids = payload.tickets.map(ticket => ticket.id);
       const existing = await tx.ticket.findMany({ where: { id: { in: ids }, campaignId: payload.campaignId }, select: { id: true } });
-      if (existing.length === ids.length) return { demoOnly: true, batchId: payload.batchId, campaignId: payload.campaignId, created: ids.length, replayed: true, tickets: payload.tickets };
+      if (existing.length === ids.length) return { batchId: payload.batchId, campaignId: payload.campaignId, created: ids.length, replayed: true, tickets: payload.tickets };
       if (existing.length) throw new ConflictException('O lote está inconsistente. Gere uma nova prévia.');
-      if (await tx.ticket.count({ where: { campaignId: payload.campaignId } }) + ids.length > 2500) throw new ConflictException('Limite de 2.500 bilhetes demonstrativos por campanha.');
+      if (await tx.ticket.count({ where: { campaignId: payload.campaignId } }) + ids.length > 2500) throw new ConflictException('Limite de 2.500 bilhetes por campanha.');
       const collision = await tx.ticket.findFirst({ where: { campaignId: payload.campaignId, serial: { in: payload.tickets.map(ticket => ticket.serial) } }, select: { id: true } });
       if (collision) throw new ConflictException('O estoque mudou e há seriais repetidos. Gere uma nova prévia.');
       {
@@ -98,7 +77,7 @@ export class TicketCreationService {
       }
       await tx.ticket.createMany({ data: payload.tickets.map(ticket => ({ id: ticket.id, campaignId: payload.campaignId, serial: ticket.serial, status: 'AVAILABLE' as const })) });
       await tx.ticketNumber.createMany({ data: payload.tickets.flatMap(ticket => ticket.numbers.map((value, index) => ({ id: randomUUID(), ticketId: ticket.id, campaignId: payload.campaignId, position: index + 1, value }))) });
-      return { demoOnly: true, batchId: payload.batchId, campaignId: payload.campaignId, created: ids.length, replayed: false, tickets: payload.tickets };
+      return { batchId: payload.batchId, campaignId: payload.campaignId, created: ids.length, replayed: false, tickets: payload.tickets };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 5000, timeout: 20000 }); } catch (error) { ticketConflict(error); }
   }
 }

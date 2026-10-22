@@ -25,7 +25,7 @@ export class ParticipantService {
   private hash(token: string) { return createHash('sha256').update(token).digest('hex'); }
   token(cookie?: string) { return cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('bilhetou_participant='))?.slice('bilhetou_participant='.length); }
   cookie(token: string, logout = false) {
-    return `bilhetou_participant=${token}; HttpOnly; SameSite=Strict; Path=/api/demo; Max-Age=${logout ? 0 : lifetime / 1000}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
+    return `bilhetou_participant=${token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=${logout ? 0 : lifetime / 1000}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
   }
   private async session(token: string | undefined, tx: Prisma.TransactionClient = this.prisma): Promise<Session> {
     if (!token || !/^[a-f0-9]{64}$/.test(token)) throw new UnauthorizedException('Faça seu cadastro para continuar.');
@@ -34,27 +34,31 @@ export class ParticipantService {
     return session;
   }
   private openCampaignWhere(organizationId: string): Prisma.CampaignWhereInput {
-    return { organizationId, rulesVersion: { startsWith: 'demo-' }, status: 'OPEN', OR: [{ closesAt: null }, { closesAt: { gt: new Date() } }] };
+    return { organizationId, legacySample: false, status: 'OPEN', OR: [{ closesAt: null }, { closesAt: { gt: new Date() } }] };
   }
   private async defaultCampaign(tx: Prisma.TransactionClient, organizationId: string) {
     return tx.campaign.findFirst({ where: { ...this.openCampaignWhere(organizationId), ...(process.env.PUBLIC_CAMPAIGN_ID ? { id: process.env.PUBLIC_CAMPAIGN_ID } : {}) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
   }
-  private ticket(ticket: Ticket, campaignName?: string) {
+  private ticket(ticket: Ticket, campaignName?: string, closesAt?: Date | null) {
     return { id: ticket.id, serial: ticket.serial, campaignId: ticket.campaignId, campaignName,
       numbers: ticket.numbers.map(n => n.value), issuedAt: ticket.assignedAt?.toISOString(),
-      date: ticket.createdAt.toISOString(), status: ticket.status === 'AVAILABLE' ? 'Disponível' : 'Demonstrativo' };
+      date: closesAt?.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) ?? 'Data a definir', status: ticket.status === 'AVAILABLE' ? 'Disponível' : 'Atribuído' };
   }
   private async snapshot(session: Session, tx: Prisma.TransactionClient) {
-    const campaign = session.campaignId ? await tx.campaign.findFirst({ where: { id: session.campaignId, organizationId: session.participant.organizationId, rulesVersion: { startsWith: 'demo-' } } }) : null;
+    let campaign = session.campaignId ? await tx.campaign.findFirst({ where: { id: session.campaignId, organizationId: session.participant.organizationId, legacySample: false } }) : null;
+    if (!campaign) {
+      campaign = await this.defaultCampaign(tx, session.participant.organizationId);
+      if (campaign) session = await tx.participantSession.update({ where: { id: session.id }, data: { campaignId: campaign.id, selectedIds: [], selectionKey: randomUUID() }, include: { participant: true } });
+    }
     const open = campaign?.status === 'OPEN' && (!campaign.closesAt || campaign.closesAt > new Date());
     const availableCount = open ? await tx.ticket.count({ where: { campaignId: campaign!.id, status: 'AVAILABLE' } }) : 0;
     const selected = campaign ? await tx.ticket.findMany({ where: { campaignId: campaign.id, status: 'AVAILABLE', id: { in: session.selectedIds } }, include: numbers, orderBy: { serial: 'asc' } }) : [];
-    const orders = await tx.demoOrder.findMany({ where: { participantId: session.participantId, campaign: { organizationId: session.participant.organizationId } }, include: { campaign: true, tickets: { include: numbers, orderBy: { serial: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
+    const orders = await tx.order.findMany({ where: { participantId: session.participantId, legacySample: false, campaign: { organizationId: session.participant.organizationId, legacySample: false } }, include: { campaign: true, tickets: { include: numbers, orderBy: { serial: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
     return {
-      participant: { id: session.participant.id, name: session.participant.name, phone: session.participant.phone, verification: 'demo-unverified' },
-      campaign: campaign ? { id: campaign.id, name: campaign.name, ticketPriceCents: campaign.ticketPriceCents, prizeCents: 0, drawDate: campaign.closesAt?.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) ?? 'Data a definir', status: campaign.status } : null,
-      availableCount, selectedIds: selected.map(t => t.id), selectedTickets: selected.map(t => this.ticket(t, campaign?.name)), selectionKey: session.selectionKey,
-      orders: orders.map(order => ({ id: order.id, participantId: order.participantId, campaignId: order.campaignId, ticketIds: order.tickets.map(t => t.id), totalCents: order.totalCents, createdAt: order.createdAt.toISOString(), idempotencyKey: order.idempotencyKey, status: 'demo-confirmed', tickets: order.tickets.map(t => this.ticket(t, order.campaign.name)) })),
+      participant: { id: session.participant.id, name: session.participant.name, phone: session.participant.phone, verification: 'unverified' },
+      campaign: campaign ? { id: campaign.id, name: campaign.name, ticketPriceCents: campaign.ticketPriceCents, prizeCents: campaign.prizeCents, drawDate: campaign.closesAt?.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) ?? 'Data a definir', status: campaign.status } : null,
+      availableCount, selectedIds: selected.map(t => t.id), selectedTickets: selected.map(t => this.ticket(t, campaign?.name, campaign?.closesAt)), selectionKey: session.selectionKey,
+      orders: orders.map(order => ({ id: order.id, participantId: order.participantId, campaignId: order.campaignId, ticketIds: order.tickets.map(t => t.id), totalCents: order.totalCents, createdAt: order.createdAt.toISOString(), idempotencyKey: order.idempotencyKey, status: 'registered', paymentStatus: 'UNPAID', tickets: order.tickets.map(t => this.ticket(t, order.campaign.name, order.campaign.closesAt)) })),
     };
   }
   async current(token?: string) {
@@ -66,12 +70,12 @@ export class ParticipantService {
   async register(name: string, phone: string, previousToken?: string) {
     const input = normalizeRegistration(name, phone);
     const organizationId = this.organizationId();
-    if (!organizationId) throw new ServiceUnavailableException('O cadastro aguarda a configuração da campanha demonstrativa.');
+    if (!organizationId) throw new ServiceUnavailableException('O cadastro aguarda a configuração da organização.');
     const token = randomBytes(32).toString('hex');
     const state = await this.prisma.$transaction(async tx => {
-      if (!await tx.organization.findUnique({ where: { id: organizationId }, select: { id: true } })) throw new ServiceUnavailableException('A organização demonstrativa ainda não foi cadastrada.');
+      if (!await tx.organization.findUnique({ where: { id: organizationId }, select: { id: true } })) throw new ServiceUnavailableException('A organização ainda não foi cadastrada.');
       const campaign = await this.defaultCampaign(tx, organizationId);
-      if (!campaign) throw new ConflictException('Nenhuma campanha demonstrativa aberta. Cadastre uma campanha antes de continuar.');
+      if (!campaign) throw new ConflictException('Nenhuma campanha aberta. Aguarde a abertura de uma campanha.');
       // Never restore an identity just by matching an unverified phone number.
       let participant: { id: string } | null = null;
       if (previousToken) {
@@ -81,7 +85,7 @@ export class ParticipantService {
         } catch (error) { if (!(error instanceof UnauthorizedException)) throw error; }
         await tx.participantSession.deleteMany({ where: { tokenHash: this.hash(previousToken) } });
       }
-      participant ??= await tx.demoParticipant.create({ data: { organizationId, ...input } });
+      participant ??= await tx.participant.create({ data: { organizationId, ...input } });
       const session = await tx.participantSession.create({ data: { tokenHash: this.hash(token), participantId: participant.id, campaignId: campaign.id, selectedIds: [], expiresAt: new Date(Date.now() + lifetime) }, include: { participant: true } });
       return this.snapshot(session, tx);
     });
@@ -133,20 +137,20 @@ export class ParticipantService {
       const totalPages = Math.max(1, Math.ceil(total / 20));
       const current = Math.min(page, totalPages);
       const items = await tx.ticket.findMany({ where, include: numbers, orderBy: { serial: 'asc' }, skip: (current - 1) * 20, take: 20 });
-      return { items: items.map(t => this.ticket(t, campaign.name)), total, page: current, totalPages };
+      return { items: items.map(t => this.ticket(t, campaign.name, campaign.closesAt)), total, page: current, totalPages };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
   async confirm(token: string | undefined, key: string) {
     return this.prisma.$transaction(async tx => {
       const session = await this.lockedSession(token, tx);
-      const previous = await tx.demoOrder.findUnique({ where: { participantId_idempotencyKey: { participantId: session.participantId, idempotencyKey: key } } });
+      const previous = await tx.order.findUnique({ where: { participantId_idempotencyKey: { participantId: session.participantId, idempotencyKey: key } } });
       if (previous) return this.snapshot(session, tx);
       if (key !== session.selectionKey || !session.selectedIds.length) throw new ConflictException('A seleção mudou. Confira seus bilhetes antes de confirmar.');
       const campaign = await this.campaign(session, tx);
       const selected = await tx.ticket.findMany({ where: { id: { in: session.selectedIds }, campaignId: campaign.id, status: 'AVAILABLE' }, select: { id: true } });
       if (selected.length !== session.selectedIds.length) throw new ConflictException('Algum bilhete já foi atribuído. Escolha seus bilhetes novamente.');
-      const order = await tx.demoOrder.create({ data: { campaignId: campaign.id, participantId: session.participantId, idempotencyKey: key, quantity: selected.length, totalCents: selected.length * campaign.ticketPriceCents } });
-      const result = await tx.ticket.updateMany({ where: { id: { in: selected.map(t => t.id) }, campaignId: campaign.id, status: 'AVAILABLE' }, data: { status: 'ASSIGNED_DEMO', demoOrderId: order.id, assignedAt: new Date() } });
+      const order = await tx.order.create({ data: { campaignId: campaign.id, participantId: session.participantId, idempotencyKey: key, quantity: selected.length, totalCents: selected.length * campaign.ticketPriceCents } });
+      const result = await tx.ticket.updateMany({ where: { id: { in: selected.map(t => t.id) }, campaignId: campaign.id, status: 'AVAILABLE' }, data: { status: 'ASSIGNED', orderId: order.id, assignedAt: new Date() } });
       if (result.count !== selected.length) throw new ConflictException('O estoque mudou. Escolha seus bilhetes novamente.');
       const updated = await tx.participantSession.update({ where: { id: session.id }, data: { selectedIds: [], selectionKey: randomUUID() }, include: { participant: true } });
       return this.snapshot(updated, tx);
@@ -155,6 +159,6 @@ export class ParticipantService {
   async results(token?: string) {
     const session = await this.session(token);
     if (!session.campaignId) return [];
-    return this.prisma.draw.findMany({ where: { campaignId: session.campaignId, campaign: { organizationId: session.participant.organizationId, rulesVersion: { startsWith: 'demo-' } } }, select: { id: true, reference: true, createdAt: true, results: { select: { number: true, position: true }, orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
+    return this.prisma.draw.findMany({ where: { campaignId: session.campaignId, campaign: { organizationId: session.participant.organizationId, legacySample: false } }, select: { id: true, reference: true, createdAt: true, results: { select: { number: true, position: true }, orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
   }
 }

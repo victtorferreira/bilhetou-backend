@@ -52,7 +52,7 @@ test('draw replay returns immutable snapshot; changing number is rejected', asyn
   await assert.rejects(service.check('ORG', 'C', 'REF', '1123', 'admin'), /referência/);
 });
 test('draw distinguishes available, demo assigned before/after closing and missing numbers', async () => {
-  for (const ticket of [null, { id: 'T', serial: 'DS1', status: 'AVAILABLE', assignedAt: null }, { id: 'T', serial: 'DS1', status: 'ASSIGNED_DEMO', assignedAt: new Date('2020-01-01') }, { id: 'T', serial: 'DS1', status: 'ASSIGNED_DEMO', assignedAt: new Date('2020-01-03') }]) {
+  for (const ticket of [null, { id: 'T', serial: 'DS1', status: 'AVAILABLE', assignedAt: null }, { id: 'T', serial: 'DS1', status: 'ASSIGNED', assignedAt: new Date('2020-01-01') }, { id: 'T', serial: 'DS1', status: 'ASSIGNED', assignedAt: new Date('2020-01-03') }]) {
     const tx = { $queryRaw: async () => [], campaign: { findFirst: async () => ({ status: 'CLOSED', closesAt: new Date('2020-01-02') }) }, drawCheck: { findUnique: async () => null, create: async ({ data }) => data }, ticketNumber: { findUnique: async () => ticket ? { ticket } : null } };
     const result = await new AdminTicketService({ $transaction: async cb => cb(tx) }).check('ORG', 'C', 'REF', '0038', 'admin');
     assert.equal(result.snapshot.sold, false); assert.equal(result.snapshot.eligible, false);
@@ -83,7 +83,7 @@ test('PostgreSQL enforces concurrent uniqueness, cross-campaign reuse, cardinali
   const { PrismaPg } = require('@prisma/adapter-pg');
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.TEST_DATABASE_URL }) });
   const org = await prisma.organization.create({ data: { name: `exclusivity-${randomUUID()}` } });
-  const campaigns = await Promise.all([0,1].map(i => prisma.campaign.create({ data: { name: `TEST${i}`, organizationId: org.id } })));
+  const campaigns = await Promise.all([0,1].map(i => prisma.campaign.create({ data: { ticketPriceCents: 250, name: `TEST${i}`, organizationId: org.id } })));
   const create = (campaignId, serial, numbers) => prisma.$transaction(async tx => {
     const ticket = await tx.ticket.create({ data: { campaignId, serial } });
     await tx.ticketNumber.createMany({ data: numbers.map((value, i) => ({ ticketId: ticket.id, campaignId, value, position: i + 1 })) });
@@ -99,7 +99,7 @@ test('PostgreSQL enforces concurrent uniqueness, cross-campaign reuse, cardinali
     await assert.rejects(create(campaigns[0].id,'REPEAT',['0001','0001','0002','0003']));
     await assert.rejects(create(campaigns[0].id,'FORMAT',['001','0002','0003','0004']));
     await assert.rejects(prisma.ticketNumber.updateMany({ where: { ticketId: ticket.id }, data: { campaignId: campaigns[0].id } }));
-    await prisma.ticket.update({ where: { id: ticket.id }, data: { status: 'ASSIGNED_DEMO', assignedAt: new Date() } });
+    await prisma.ticket.update({ where: { id: ticket.id }, data: { status: 'ASSIGNED', assignedAt: new Date() } });
     await assert.rejects(prisma.ticketNumber.updateMany({ where: { ticketId: ticket.id, position: 1 }, data: { value: '0001' } }));
     // Cleanup only explicitly created fixtures; restore the fixture's status first.
     await prisma.ticket.update({ where: { id: ticket.id }, data: { status: 'AVAILABLE', assignedAt: null } });

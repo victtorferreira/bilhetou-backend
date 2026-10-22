@@ -6,7 +6,8 @@ export class CampaignsController {
   @Get()
   list() {
     return this.prisma.campaign.findMany({
-      select: { id: true, name: true, status: true, rulesVersion: true, ticketPriceCents: true, closesAt: true, _count: { select: { tickets: true } } },
+      where: { organizationId: process.env.PUBLIC_ORGANIZATION_ID || process.env.ADMIN_ORGANIZATION_ID || '00000000-0000-0000-0000-000000000000', legacySample: false, status: 'OPEN' },
+      select: { id: true, name: true, status: true, rulesVersion: true, ticketPriceCents: true, prizeCents: true, closesAt: true, _count: { select: { tickets: true } } },
       orderBy: { createdAt: 'desc' },
     });
   }

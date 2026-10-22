@@ -17,7 +17,7 @@ enum CampaignStatus {
 
 enum TicketStatus {
   AVAILABLE
-  ASSIGNED_DEMO
+  ASSIGNED
   VOID
 }
 
@@ -32,7 +32,7 @@ model Organization {
   name      String
   createdAt DateTime   @default(now())
   campaigns Campaign[]
-  participants DemoParticipant[]
+  participants Participant[]
 }
 
 model Campaign {
@@ -41,13 +41,15 @@ model Campaign {
   organization   Organization   @relation(fields: [organizationId], references: [id])
   name           String
   status         CampaignStatus @default(DRAFT)
-  ticketPriceCents Int          @default(200)
-  rulesVersion   String         @default("draft-v1")
+  ticketPriceCents Int
+  rulesVersion   String         @default("v1")
+  prizeCents     Int?
+  legacySample   Boolean @default(false)
   closesAt       DateTime?
   createdAt      DateTime       @default(now())
   tickets        Ticket[]
   draws          Draw[]
-  demoOrders     DemoOrder[]
+  orders     Order[]
   drawChecks     DrawCheck[]
   participantSessions ParticipantSession[]
   @@index([organizationId, status])
@@ -59,8 +61,8 @@ model Ticket {
   campaign   Campaign     @relation(fields: [campaignId], references: [id])
   serial     String
   status     TicketStatus @default(AVAILABLE)
-  demoOrderId String?     @db.Uuid
-  demoOrder  DemoOrder?   @relation(fields: [demoOrderId], references: [id])
+  orderId String?     @db.Uuid
+  order  Order?   @relation(fields: [orderId], references: [id])
   numbers    TicketNumber[]
   matches    TicketMatch[]
   createdAt  DateTime     @default(now())
@@ -97,22 +99,23 @@ model DrawCheck {
   @@index([campaignId, createdAt])
 }
 
-model DemoOrder {
+model Order {
   id            String   @id @default(uuid()) @db.Uuid
   campaignId    String   @db.Uuid
   campaign      Campaign @relation(fields: [campaignId], references: [id])
+  legacySample  Boolean @default(false)
   quantity      Int
   totalCents    Int
   createdAt     DateTime @default(now())
   tickets       Ticket[]
   participantId String? @db.Uuid
-  participant DemoParticipant? @relation(fields: [participantId], references: [id])
+  participant Participant? @relation(fields: [participantId], references: [id])
   idempotencyKey String? @db.Uuid
   @@unique([participantId, idempotencyKey])
 }
 
-// These identities are unverified demo registrations, not authenticated phone owners.
-model DemoParticipant {
+// A phone supplied at registration does not prove ownership.
+model Participant {
   id String @id @default(uuid()) @db.Uuid
   organizationId String @db.Uuid
   organization Organization @relation(fields: [organizationId], references: [id])
@@ -120,7 +123,7 @@ model DemoParticipant {
   phone String @db.VarChar(11)
   createdAt DateTime @default(now())
   sessions ParticipantSession[]
-  orders DemoOrder[]
+  orders Order[]
   @@index([organizationId])
 }
 
@@ -128,7 +131,7 @@ model ParticipantSession {
   id String @id @default(uuid()) @db.Uuid
   tokenHash String @unique @db.Char(64)
   participantId String @db.Uuid
-  participant DemoParticipant @relation(fields: [participantId], references: [id])
+  participant Participant @relation(fields: [participantId], references: [id])
   campaignId String? @db.Uuid
   campaign Campaign? @relation(fields: [campaignId], references: [id])
   selectedIds String[] @db.Uuid

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { demoOrigins } from './local-demo.guard';
+import { allowedOrigins } from '../security/origins';
 
 export interface AdminRequest { headers: Record<string, string | undefined>; admin: { organizationId: string; actor: string } }
 @Injectable()
@@ -31,7 +31,7 @@ export class AdminAuth implements CanActivate {
   logout(request: AdminRequest) { const token = this.token(request); if (token) this.sessions.delete(token); }
   canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<AdminRequest>();
-    if (request.headers.origin && !demoOrigins().includes(request.headers.origin)) throw new ForbiddenException('Origem não permitida.');
+    if (request.headers.origin && !allowedOrigins().includes(request.headers.origin)) throw new ForbiddenException('Origem não permitida.');
     const session = this.sessions.get(this.token(request) || '');
     if (!session || session.expires <= Date.now()) throw new UnauthorizedException('Entre com a credencial administrativa.');
     request.admin = { organizationId: session.organizationId, actor: session.actor };

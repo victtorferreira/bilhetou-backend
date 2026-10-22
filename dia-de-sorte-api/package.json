@@ -8,12 +8,11 @@
     "start": "node dist/main.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "import:demo": "tsx scripts/import-demo.ts",
-    "setup:demo": "tsx scripts/setup-demo.ts",
-    "result:demo": "tsx scripts/register-result.ts",
     "test": "npm run build && node --test tests/*.test.cjs",
     "prisma:deploy": "prisma migrate deploy",
-    "tickets:audit": "node scripts/audit-ticket-numbers.cjs"
+    "tickets:audit": "node scripts/audit-ticket-numbers.cjs",
+    "organization:create": "tsx scripts/create-organization.ts",
+    "result:register": "tsx scripts/register-result.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

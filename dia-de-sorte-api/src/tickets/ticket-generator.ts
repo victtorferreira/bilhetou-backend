@@ -9,7 +9,7 @@ export function generateTickets(input: GenerationInput, stock: StockEntry[], cho
   const prefix = input.prefix.trim().toUpperCase();
   if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 1000) throw new BadRequestException('Quantidade deve ser um inteiro entre 1 e 1.000.');
   if (!/^[A-Z][A-Z0-9-]{0,11}$/.test(prefix)) throw new BadRequestException('Prefixo inválido. Use até 12 letras, números ou hífens, começando com uma letra.');
-  if (stock.length + input.quantity > 2500) throw new ConflictException('O estoque demonstrativo aceita até 2.500 bilhetes por campanha.');
+  if (stock.length + input.quantity > 2500) throw new ConflictException('O estoque aceita até 2.500 bilhetes por campanha.');
   const occupied = new Set(stock.flatMap(ticket => ticket.numbers.map(number => number.value)));
   const pool = Array.from({ length: 10000 }, (_, i) => String(i).padStart(4, '0')).filter(number => !occupied.has(number));
   if (input.quantity * 4 > pool.length) throw new ConflictException(`Há números inéditos para apenas ${Math.floor(pool.length / 4)} bilhete(s).`);
