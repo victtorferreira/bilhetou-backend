@@ -31,3 +31,9 @@ A aplicação ouve em 0.0.0.0 e usa a variável PORT, com padrão 3000. As rotas
 A confirmação vincula os bilhetes ao participante com uma transação e chave idempotente. A seleção não reserva estoque; conflitos são rejeitados. O estado ASSIGNED significa atribuído. Não há integração automática de pagamentos, comprovação de pagamento ou verificação de identidade por telefone.
 
 Os dados de preparação anteriores são arquivados pela migração de transição e não entram no catálogo ou nos novos pedidos. Nenhum script cria estoque automaticamente durante a inicialização.
+
+## Participantes no painel
+
+A aba `/admin/participantes` lista os cadastros da organização autenticada, com busca por nome/WhatsApp, filtro por campanha e por existência de pedidos, e paginação de 20 registros. A listagem retorna contato mascarado; os detalhes autenticados exibem o contato completo, totais, pedidos e bilhetes paginados. Campanhas e pedidos de preparação arquivados não entram nos totais.
+
+As rotas são `GET /api/admin/participants`, `GET /api/admin/participants/:id`, `GET /api/admin/participants/:id/orders` e `GET /api/admin/participants/:id/tickets`. Nenhuma aceita a organização enviada pelo cliente: o escopo vem da sessão administrativa. Esta funcionalidade usa as tabelas existentes e não exige migração ou novas variáveis de ambiente. Os valores exibidos são valores de pedidos, não recebimentos confirmados.
