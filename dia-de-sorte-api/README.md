@@ -1,5 +1,7 @@
 # Bilhetou — backend NestJS + Prisma + PostgreSQL (MVP DEMO)
 
+> Atualização da integração pública: para publicar no Render com o frontend na Vercel, siga [DEPLOY-RENDER-VERCEL.md](../../DEPLOY-RENDER-VERCEL.md). Esse guia documenta as rotas de sessão agora implementadas, o proxy, as migrações versionadas e a preparação explícita da campanha de testes. As instruções históricas abaixo sobre sessão exclusivamente local e ausência de alterações no schema foram substituídas pelos guias de deploy e exclusividade.
+
 **Somente demonstração técnica.** Não cobra Pix, não vende rifas reais, não declara vencedores nem paga prêmios. O dado de R$ 2 é **ilustrativo**, em centavos (`200`). Regras e autorização de operação real precisam de revisão jurídica.
 
 ## Pré-requisitos

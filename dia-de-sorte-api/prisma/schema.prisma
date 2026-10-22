@@ -32,6 +32,7 @@ model Organization {
   name      String
   createdAt DateTime   @default(now())
   campaigns Campaign[]
+  participants DemoParticipant[]
 }
 
 model Campaign {
@@ -48,6 +49,7 @@ model Campaign {
   draws          Draw[]
   demoOrders     DemoOrder[]
   drawChecks     DrawCheck[]
+  participantSessions ParticipantSession[]
   @@index([organizationId, status])
 }
 
@@ -103,6 +105,37 @@ model DemoOrder {
   totalCents    Int
   createdAt     DateTime @default(now())
   tickets       Ticket[]
+  participantId String? @db.Uuid
+  participant DemoParticipant? @relation(fields: [participantId], references: [id])
+  idempotencyKey String? @db.Uuid
+  @@unique([participantId, idempotencyKey])
+}
+
+// These identities are unverified demo registrations, not authenticated phone owners.
+model DemoParticipant {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  organization Organization @relation(fields: [organizationId], references: [id])
+  name String @db.VarChar(120)
+  phone String @db.VarChar(11)
+  createdAt DateTime @default(now())
+  sessions ParticipantSession[]
+  orders DemoOrder[]
+  @@index([organizationId])
+}
+
+model ParticipantSession {
+  id String @id @default(uuid()) @db.Uuid
+  tokenHash String @unique @db.Char(64)
+  participantId String @db.Uuid
+  participant DemoParticipant @relation(fields: [participantId], references: [id])
+  campaignId String? @db.Uuid
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+  selectedIds String[] @db.Uuid
+  selectionKey String @default(uuid()) @db.Uuid
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
 }
 
 model Draw {

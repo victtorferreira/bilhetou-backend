@@ -9,6 +9,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "import:demo": "tsx scripts/import-demo.ts",
+    "setup:demo": "tsx scripts/setup-demo.ts",
     "result:demo": "tsx scripts/register-result.ts",
     "test": "npm run build && node --test tests/*.test.cjs",
     "prisma:deploy": "prisma migrate deploy",
