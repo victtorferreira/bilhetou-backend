@@ -67,7 +67,7 @@ export class ParticipantService {
       return await this.prisma.$transaction(async tx => this.snapshot(await this.session(token, tx), tx), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     } catch (error) { if (error instanceof UnauthorizedException) return empty(); throw error; }
   }
-  async register(name: string, phone: string, previousToken?: string) {
+  async register(name: string, phone: string, previousToken?: string, whatsappConsent = false) {
     const input = normalizeRegistration(name, phone);
     const organizationId = this.organizationId();
     if (!organizationId) throw new ServiceUnavailableException('O cadastro aguarda a configuração da organização.');
@@ -86,6 +86,12 @@ export class ParticipantService {
         await tx.participantSession.deleteMany({ where: { tokenHash: this.hash(previousToken) } });
       }
       participant ??= await tx.participant.create({ data: { organizationId, ...input } });
+      if (whatsappConsent === true) {
+        await tx.whatsappWelcome.createMany({
+          data: [{ participantId: participant.id, organizationId, ...input, consentVersion: 'welcome-v1' }],
+          skipDuplicates: true,
+        });
+      }
       const session = await tx.participantSession.create({ data: { tokenHash: this.hash(token), participantId: participant.id, campaignId: campaign.id, selectedIds: [], expiresAt: new Date(Date.now() + lifetime) }, include: { participant: true } });
       return this.snapshot(session, tx);
     });

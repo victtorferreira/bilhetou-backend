@@ -1,0 +1,50 @@
+services:
+  waha:
+    image: ${WAHA_IMAGE:-devlikeapro/waha:latest}
+    restart: unless-stopped
+    init: true
+    shm_size: 512mb
+    environment:
+      WHATSAPP_API_PORT: "3000"
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+      WAHA_WORKER_ID: bilhetou-ovh
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+      WAHA_PRINT_QR: "False"
+      WAHA_BASE_URL: https://${WAHA_HOST:?Configure WAHA_HOST}
+      WAHA_PUBLIC_URL: https://${WAHA_HOST:?Configure WAHA_HOST}
+      WAHA_API_KEY: ${WAHA_API_KEY:?Configure WAHA_API_KEY}
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Configure WAHA_DASHBOARD_PASSWORD}
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_SWAGGER_PASSWORD:?Configure WAHA_SWAGGER_PASSWORD}
+      TZ: America/Sao_Paulo
+    volumes:
+      - waha_sessions:/app/.sessions
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - waha
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      WAHA_HOST: ${WAHA_HOST:?Configure WAHA_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  waha_sessions:
+  caddy_data:
+  caddy_config:

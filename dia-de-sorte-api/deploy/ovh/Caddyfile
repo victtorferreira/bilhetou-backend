@@ -1,0 +1,3 @@
+{$WAHA_HOST} {
+    reverse_proxy waha:3000
+}

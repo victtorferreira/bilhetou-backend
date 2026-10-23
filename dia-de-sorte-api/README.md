@@ -20,6 +20,10 @@ A aplicação ouve em 0.0.0.0 e usa a variável PORT, com padrão 3000. As rotas
 
 ## Comandos
 
+A migração escolhida para o Railway está descrita em `../../DEPLOY-RAILWAY-VERCEL.md` no workspace. A API inclui `Dockerfile`, `railway.json` e `/api/health`, que consulta o banco. A transferência de dados é uma operação explícita pelo script `scripts/migrate-render-railway.cjs`, nunca executada automaticamente ao iniciar a API.
+
+Para ativar a confirmação de cadastro pelo WhatsApp, veja [WHATSAPP.md](WHATSAPP.md). A integração WAHA usa uma fila persistente no PostgreSQL e fica desativada até configurar as variáveis de ambiente.
+
 - `npm run organization:create`: cria explicitamente a organização configurada em PUBLIC_ORGANIZATION_ID/ORGANIZATION_NAME, quando ainda não existe.
 - `npm run tickets:audit`: auditoria de exclusividade sem alterar os dados.
 - `npm run result:register`: registra resultados pelo operador. Correspondências não autorizam pagamentos de prêmios.

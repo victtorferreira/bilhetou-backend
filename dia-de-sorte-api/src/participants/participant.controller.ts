@@ -28,7 +28,7 @@ export class ParticipantController {
   }
   private legacyCookie() { return `bilhetou_participant=; HttpOnly; SameSite=Strict; Path=/api/demo; Max-Age=0${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`; }
   @Post('session') async register(@Body() dto: RegisterParticipantDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const { token, state } = await this.service.register(dto.name, dto.phone, this.token(req, res));
+    const { token, state } = await this.service.register(dto.name, dto.phone, this.token(req, res), dto.whatsappConsent);
     res.setHeader('Set-Cookie', this.service.cookie(token)); return state;
   }
   @Post('session/logout') async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {

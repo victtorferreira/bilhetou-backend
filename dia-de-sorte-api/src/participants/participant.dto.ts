@@ -1,9 +1,10 @@
 import { Transform } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 export class RegisterParticipantDto {
   @IsString() @MaxLength(120) name!: string;
   @IsString() @MaxLength(30) phone!: string;
+  @IsOptional() @IsBoolean() whatsappConsent?: boolean;
 }
 export class ParticipantSelectionDto {
   @ValidateIf(o => o.ticketIds !== undefined || o.quantity === undefined)

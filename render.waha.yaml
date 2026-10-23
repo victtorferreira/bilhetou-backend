@@ -1,0 +1,39 @@
+# Standalone WAHA service. Import only after reviewing the paid compute plan.
+# Current estimate (2026-10-22): USD 85/month compute + USD 0.25/month disk,
+# excluding taxes, bandwidth, workspace charges, and existing backend/database.
+# Set the region to match the backend before creating the service.
+services:
+  - type: web
+    name: bilhetou-waha
+    runtime: image
+    plan: 2c-4g
+    numInstances: 1
+    image:
+      url: docker.io/devlikeapro/waha:latest
+    disk:
+      name: waha-sessions
+      mountPath: /app/.sessions
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: WHATSAPP_API_PORT
+        value: "3000"
+      - key: WHATSAPP_DEFAULT_ENGINE
+        value: WEBJS
+      - key: WAHA_WORKER_ID
+        value: bilhetou-waha
+      - key: WHATSAPP_RESTART_ALL_SESSIONS
+        value: "True"
+      - key: WAHA_PRINT_QR
+        value: "False"
+      - key: WAHA_API_KEY
+        generateValue: true
+      - key: WAHA_DASHBOARD_USERNAME
+        value: admin
+      - key: WAHA_DASHBOARD_PASSWORD
+        generateValue: true
+      - key: WHATSAPP_SWAGGER_USERNAME
+        value: admin
+      - key: WHATSAPP_SWAGGER_PASSWORD
+        generateValue: true

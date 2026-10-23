@@ -1,0 +1,14 @@
+node_modules
+dist
+src/generated
+.git
+.env
+.env.*
+!.env.example
+backups
+*.dump
+*.sql.gz
+*.tsbuildinfo
+deploy
+tests
+sample

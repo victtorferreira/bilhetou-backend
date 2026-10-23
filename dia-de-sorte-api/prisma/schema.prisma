@@ -124,7 +124,29 @@ model Participant {
   createdAt DateTime @default(now())
   sessions ParticipantSession[]
   orders Order[]
+  welcomeMessages WhatsappWelcome[]
   @@index([organizationId])
+}
+
+// One welcome per organization/phone, without using the phone as authentication.
+model WhatsappWelcome {
+  id String @id @default(uuid()) @db.Uuid
+  participantId String @db.Uuid
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  organizationId String @db.Uuid
+  phone String @db.VarChar(11)
+  name String @db.VarChar(120)
+  consentVersion String @default("welcome-v1")
+  consentedAt DateTime @default(now())
+  status String @default("PENDING")
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lockedAt DateTime?
+  sentAt DateTime?
+  providerMessageId String?
+  lastError String?
+  @@unique([organizationId, phone])
+  @@index([status, nextAttemptAt])
 }
 
 model ParticipantSession {

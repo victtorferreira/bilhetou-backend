@@ -1,0 +1,18 @@
+# Optional local WAHA. Set the three secrets below in .env before starting.
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:?Configure WAHA_API_KEY}
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?Configure WAHA_DASHBOARD_PASSWORD}
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_SWAGGER_PASSWORD:?Configure WAHA_SWAGGER_PASSWORD}
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+    volumes:
+      - waha_sessions:/app/.sessions
+volumes:
+  waha_sessions:
