@@ -4,7 +4,9 @@ O formulário permite solicitar uma confirmação por WhatsApp (opcional, desmar
 
 ## Ativar
 
-Para a implantação escolhida na OVHcloud, siga [WAHA-OVH.md](WAHA-OVH.md). Os arquivos Docker, HTTPS e geração de segredos estão em `deploy/ovh`.
+Para a implantação atual no Railway, siga [WAHA-RAILWAY.md](WAHA-RAILWAY.md). O modelo de variáveis do serviço está em `deploy/railway/waha.env.example`.
+
+Para a alternativa na OVHcloud, siga [WAHA-OVH.md](WAHA-OVH.md). Os arquivos Docker, HTTPS e geração de segredos estão em `deploy/ovh`.
 
 Para hospedar o novo serviço no Render, consulte [WAHA-RENDER.md](WAHA-RENDER.md), com os campos do painel, configuração preparada em Blueprint e custo para revisão antes da criação.
 
