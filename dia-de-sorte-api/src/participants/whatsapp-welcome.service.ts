@@ -43,13 +43,13 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
     await this.running;
   }
 
-  private async request(path: string, body?: unknown) {
+  private async request(path: string, body?: unknown, timeoutMs = 10000) {
     const config = this.config!;
     return fetch(`${config.baseUrl}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'X-Api-Key': config.apiKey, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(timeoutMs),
       redirect: 'error',
     });
   }
@@ -77,14 +77,16 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
     if (!rows.length) return;
     const message = rows[0];
     let chatId: string;
+    let stage = 'SESSION';
     try {
       const sessionResponse = await this.request(`/api/sessions/${encodeURIComponent(this.config.session)}`);
       if (!sessionResponse.ok) throw new Error(`SESSION_HTTP_${sessionResponse.status}`);
       const session = await sessionResponse.json() as { status?: string };
       if (session.status !== 'WORKING') throw new Error('SESSION_NOT_WORKING');
+      stage = 'CONTACT';
       // Ask WhatsApp for the canonical chatId (including Brazilian ninth-digit differences).
       const params = new URLSearchParams({ phone: `55${message.phone}`, session: this.config.session });
-      const contactResponse = await this.request(`/api/contacts/check-exists?${params}`);
+      const contactResponse = await this.request(`/api/contacts/check-exists?${params}`, undefined, 60000);
       if (!contactResponse.ok) throw new Error(`CONTACT_HTTP_${contactResponse.status}`);
       const contact = await contactResponse.json() as { numberExists?: boolean; chatId?: string };
       if (contact.numberExists === false) {
@@ -93,15 +95,19 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
       }
       if (contact.numberExists !== true || typeof contact.chatId !== 'string' || !/^\d+@(c\.us|lid)$/.test(contact.chatId)) throw new Error('INVALID_CONTACT_RESPONSE');
       chatId = contact.chatId;
-    } catch {
+    } catch (error) {
       // No send has occurred: these retries are safe.
+      // Store only controlled codes: fetch errors may contain private request details.
+      const reason = error instanceof Error && /^(SESSION_HTTP_\d{3}|SESSION_NOT_WORKING|CONTACT_HTTP_\d{3}|INVALID_CONTACT_RESPONSE)$/.test(error.message)
+        ? error.message
+        : `${stage}_${error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? 'TIMEOUT' : 'REQUEST_FAILED'}`;
       const retry = message.attempts < maxAttempts;
       await this.prisma.whatsappWelcome.update({ where: { id: message.id }, data: {
         status: retry ? 'PENDING' : 'FAILED', lockedAt: null,
         nextAttemptAt: new Date(Date.now() + Math.min(3600000, 30000 * 2 ** (message.attempts - 1))),
-        lastError: 'WAHA indisponível, sessão desconectada ou consulta de contato falhou.',
+        lastError: reason,
       } });
-      this.logger.warn(`Boas-vindas ${message.id}: ${retry ? 'nova tentativa agendada' : 'tentativas esgotadas'}.`);
+      this.logger.warn(`Boas-vindas ${message.id}: ${reason}; ${retry ? 'nova tentativa agendada' : 'tentativas esgotadas'}.`);
       return;
     }
 

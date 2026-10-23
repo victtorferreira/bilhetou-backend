@@ -57,7 +57,43 @@ test('disconnected session retries without making a send request; retries are bo
       return Response.json({ status: 'SCAN_QR_CODE' });
     }, () => service.processNext());
     assert.equal(updates.at(-1).status, attempts === 1 ? 'PENDING' : 'FAILED');
+    assert.equal(updates.at(-1).lastError, 'SESSION_NOT_WORKING');
     assert.ok(updates.at(-1).nextAttemptAt > new Date());
+  }
+});
+
+test('contact lookup has a longer deadline while session checks and sending keep their deadlines', async () => {
+  const { service, updates } = worker();
+  const deadlines = [];
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = ms => { deadlines.push(ms); return originalTimeout(ms); };
+  try {
+    await withFetch(async url => {
+      if (url.includes('/sessions/')) return Response.json({ status: 'WORKING' });
+      if (url.includes('/contacts/')) return Response.json({ numberExists: true, chatId: '123456789@lid' });
+      return Response.json({ id: 'accepted' });
+    }, () => service.processNext());
+    assert.deepEqual(deadlines, [10000, 60000, 10000]);
+    assert.equal(updates.at(-1).status, 'SENT');
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
+});
+
+test('pre-send failures record a safe diagnostic code and never send', async () => {
+  for (const outcome of ['timeout', 'unauthorized', 'network']) {
+    const { service, updates } = worker();
+    await withFetch(async (url, init) => {
+      assert.equal(init.method, 'GET');
+      if (url.includes('/sessions/')) return Response.json({ status: 'WORKING' });
+      if (outcome === 'unauthorized') return new Response('', { status: 401 });
+      if (outcome === 'timeout') throw new DOMException('private request details', 'TimeoutError');
+      throw new Error('private request details');
+    }, () => service.processNext());
+    assert.equal(updates.at(-1).status, 'PENDING');
+    assert.equal(updates.at(-1).lastError, {
+      timeout: 'CONTACT_TIMEOUT', unauthorized: 'CONTACT_HTTP_401', network: 'CONTACT_REQUEST_FAILED',
+    }[outcome]);
   }
 });
 
