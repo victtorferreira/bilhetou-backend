@@ -31,7 +31,7 @@ export function whatsappConfig() {
 }
 
 export function welcomeText(name: string) {
-  return `Olá, ${name.split(' ')[0]}! 👋 Bem-vindo ao Bilhetou. Seu cadastro foi realizado com sucesso!\n\nEsta é a confirmação de cadastro que você solicitou no site.`;
+  return `Olá, ${name.split(' ')[0]}! 👋\nSeu cadastro no *Bilhetou* foi realizado com sucesso! 🎟️\n\nQuando quiser voltar ao site e consultar seus bilhetes, acesse:\nhttps://bilhetou.vercel.app\n\nGuarde este link para acessar quando precisar. 😊`;
 }
 
 @Injectable()

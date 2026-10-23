@@ -29,7 +29,17 @@ WAHA_SESSION=default
 
 5. Faça um cadastro com um número sob seu controle e marque a autorização. O worker verifica a fila a cada 5 segundos, consulta o estado da sessão e resolve o identificador do contato antes de enviar. Não houve envio real durante a implementação.
 
-Mensagem: “Olá, Maria! 👋 Bem-vindo ao Bilhetou. Seu cadastro foi realizado com sucesso! Esta é a confirmação de cadastro que você solicitou no site.”
+Mensagem (Maria é substituída pelo primeiro nome do participante):
+
+```text
+Olá, Maria! 👋
+Seu cadastro no *Bilhetou* foi realizado com sucesso! 🎟️
+
+Quando quiser voltar ao site e consultar seus bilhetes, acesse:
+https://bilhetou.vercel.app
+
+Guarde este link para acessar quando precisar. 😊
+```
 
 ## Operação
 

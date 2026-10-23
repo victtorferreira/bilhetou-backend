@@ -152,7 +152,7 @@ test('Evolution validates connection, resolves canonical number and sends with i
         assert.deepEqual(JSON.parse(init.body), { numbers: ['5598999999999'] });
         return Response.json([{ exists: true, jid }]);
       }
-      assert.deepEqual(JSON.parse(init.body), { number: jid, text: 'Olá, Maria! 👋 Bem-vindo ao Bilhetou. Seu cadastro foi realizado com sucesso!\n\nEsta é a confirmação de cadastro que você solicitou no site.' });
+      assert.deepEqual(JSON.parse(init.body), { number: jid, text: 'Olá, Maria! 👋\nSeu cadastro no *Bilhetou* foi realizado com sucesso! 🎟️\n\nQuando quiser voltar ao site e consultar seus bilhetes, acesse:\nhttps://bilhetou.vercel.app\n\nGuarde este link para acessar quando precisar. 😊' });
       return Response.json({ key: { id: 'evolution-message' } }, { status: 201 });
     }, async () => { await service.processNext(); await service.processNext(); });
     assert.deepEqual(paths, ['/instance/connectionState/bilhetou', '/chat/whatsappNumbers/bilhetou', '/message/sendText/bilhetou']);

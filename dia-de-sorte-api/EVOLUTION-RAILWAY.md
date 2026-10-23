@@ -16,6 +16,23 @@ Na raiz do repositório backend, publique os arquivos desta implementação na b
 
 ## 3. Criar os serviços de infraestrutura
 
+### Ajuste para o limite do plano Free
+
+Se a criação da Evolution falhar com `Free plan resource provision limit exceeded`, não crie novos bancos ou projetos para tentar resolver. Para esta instalação com uma réplica, substitua o Redis recém-criado pela Evolution: remova somente o serviço `evolution-redis` que ainda não atende nenhuma aplicação e tente criar a Evolution novamente. A liberação depende dos limites efetivos da conta; se continuar bloqueado, confira os recursos existentes e o painel de uso antes de remover qualquer outro serviço.
+
+A versão 2.3.7 permite cache local. Nesse caso, no modelo de variáveis abaixo, substitua a configuração Redis por:
+
+```dotenv
+CACHE_REDIS_ENABLED=false
+CACHE_LOCAL_ENABLED=true
+CACHE_REDIS_SAVE_INSTANCES=false
+DATABASE_SAVE_DATA_INSTANCE=true
+```
+
+Remova `CACHE_REDIS_URI` e sua referência ao serviço excluído. Use apenas uma réplica; o cache local se perde a cada reinício, mas a autenticação permanece no `evolution-db`. Se o projeto já atingiu o limite de volumes, não adicione outro volume à Evolution neste modo de autenticação persistida no Postgres. Preserve os volumes do Bilhetou, do WAHA e do `evolution-db`.
+
+O restante desta seção descreve a opção com Redis, quando houver capacidade na conta.
+
 No mesmo projeto e ambiente do backend:
 
 1. **New → Database → PostgreSQL**. Renomeie o novo serviço para **evolution-db**. Este é um banco novo; não altere o `DATABASE_URL` do Bilhetou.
