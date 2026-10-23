@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { WhatsappWelcomeService, wahaConfig } = require('../dist/participants/whatsapp-welcome.service');
+const { WhatsappWelcomeService, wahaConfig, whatsappConfig } = require('../dist/participants/whatsapp-welcome.service');
 const { ParticipantService } = require('../dist/participants/participant.service');
 const { RegisterParticipantDto } = require('../dist/participants/participant.dto');
 const { validate } = require('class-validator');
@@ -136,6 +136,91 @@ test('worker expires old pending welcomes and flags stale claims for manual reco
 
 test('disabled worker makes no database or network calls', async () => {
   await new WhatsappWelcomeService({}).processNext();
+});
+
+test('Evolution validates connection, resolves canonical number and sends with its own authentication', async () => {
+  for (const jid of ['5598999999999@s.whatsapp.net', '123456789@lid']) {
+    const { service, updates } = worker();
+    service.config = { provider: 'evolution', baseUrl: 'http://evolution.test', apiKey: 'secret', session: 'bilhetou' };
+    const paths = [];
+    await withFetch(async (url, init) => {
+      paths.push(new URL(url).pathname);
+      assert.equal(init.headers.apikey, 'secret');
+      assert.equal(init.headers['X-Api-Key'], undefined);
+      if (url.includes('/connectionState/')) return Response.json({ instance: { state: 'open' } });
+      if (url.includes('/whatsappNumbers/')) {
+        assert.deepEqual(JSON.parse(init.body), { numbers: ['5598999999999'] });
+        return Response.json([{ exists: true, jid }]);
+      }
+      assert.deepEqual(JSON.parse(init.body), { number: jid, text: 'Olá, Maria! 👋 Bem-vindo ao Bilhetou. Seu cadastro foi realizado com sucesso!\n\nEsta é a confirmação de cadastro que você solicitou no site.' });
+      return Response.json({ key: { id: 'evolution-message' } }, { status: 201 });
+    }, async () => { await service.processNext(); await service.processNext(); });
+    assert.deepEqual(paths, ['/instance/connectionState/bilhetou', '/chat/whatsappNumbers/bilhetou', '/message/sendText/bilhetou']);
+    assert.equal(updates.at(-1).status, 'SENT');
+    assert.equal(updates.at(-1).providerMessageId, 'evolution-message');
+  }
+});
+
+test('Evolution never sends for closed connection, invalid contact, or nonexistent number', async () => {
+  for (const outcome of ['closed', 'invalid', 'missing', 'unauthorized']) {
+    const { service, updates } = worker();
+    service.config = { provider: 'evolution', baseUrl: 'http://evolution.test', apiKey: 'secret', session: 'bilhetou' };
+    await withFetch(async url => {
+      assert.ok(!url.includes('/message/'));
+      if (url.includes('/connectionState/')) return Response.json({ instance: { state: outcome === 'closed' ? 'close' : 'open' } });
+      if (outcome === 'unauthorized') return new Response('', { status: 401 });
+      return Response.json(outcome === 'missing' ? [{ exists: false }] : [{ exists: true, jid: 'unexpected@g.us' }]);
+    }, () => service.processNext());
+    assert.equal(updates.at(-1).status, outcome === 'missing' ? 'FAILED' : 'PENDING');
+  }
+});
+
+test('Evolution ambiguous sends stay UNKNOWN and do not retry across worker cycles', async () => {
+  for (const outcome of ['timeout', 'server-error', 'no-id']) {
+    const { service, updates } = worker();
+    service.config = { provider: 'evolution', baseUrl: 'http://evolution.test', apiKey: 'secret', session: 'bilhetou' };
+    let sends = 0;
+    await withFetch(async url => {
+      if (url.includes('/connectionState/')) return Response.json({ instance: { state: 'open' } });
+      if (url.includes('/whatsappNumbers/')) return Response.json([{ exists: true, jid: '123456789@lid' }]);
+      sends++;
+      if (outcome === 'timeout') throw new DOMException('timeout', 'TimeoutError');
+      return outcome === 'server-error' ? new Response('', { status: 500 }) : Response.json({});
+    }, async () => { await service.processNext(); await service.processNext(); });
+    assert.equal(sends, 1);
+    assert.equal(updates.at(-1).status, 'UNKNOWN');
+  }
+});
+
+test('provider selection preserves WAHA configuration and enables Evolution only explicitly', () => {
+  const names = ['WHATSAPP_PROVIDER', 'WHATSAPP_ENABLED', 'EVOLUTION_BASE_URL', 'EVOLUTION_API_KEY', 'EVOLUTION_INSTANCE', 'WAHA_ENABLED'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.WHATSAPP_PROVIDER = 'evolution';
+    process.env.WAHA_ENABLED = 'true';
+    delete process.env.WHATSAPP_ENABLED;
+    assert.equal(whatsappConfig(), null);
+    process.env.WHATSAPP_ENABLED = 'true';
+    process.env.EVOLUTION_BASE_URL = 'http://evolution:8080';
+    delete process.env.EVOLUTION_API_KEY;
+    assert.throws(whatsappConfig, /EVOLUTION_API_KEY/);
+    process.env.EVOLUTION_API_KEY = 'secret';
+    process.env.EVOLUTION_INSTANCE = 'bilhetou';
+    assert.deepEqual(whatsappConfig(), { provider: 'evolution', baseUrl: 'http://evolution:8080', apiKey: 'secret', session: 'bilhetou' });
+    for (const url of ['ftp://evolution', 'http://user:pass@evolution', 'http://evolution?secret=x', 'http://evolution/#x']) {
+      process.env.EVOLUTION_BASE_URL = url;
+      assert.throws(whatsappConfig);
+    }
+    process.env.WHATSAPP_PROVIDER = 'waha';
+    process.env.WAHA_ENABLED = 'false';
+    assert.equal(whatsappConfig(), null);
+    process.env.WHATSAPP_PROVIDER = 'typo';
+    assert.throws(whatsappConfig, /WHATSAPP_PROVIDER/);
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name]; else process.env[name] = previous[name];
+    }
+  }
 });
 
 test('configuration is disabled by default and rejects enabled mode without a key', () => {

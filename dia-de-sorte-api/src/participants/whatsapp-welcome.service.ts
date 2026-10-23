@@ -14,6 +14,22 @@ export function wahaConfig() {
   return { baseUrl: url.toString().replace(/\/$/, ''), apiKey, session: process.env.WAHA_SESSION?.trim() || 'default' };
 }
 
+export function whatsappConfig() {
+  const provider = process.env.WHATSAPP_PROVIDER?.trim() || 'waha';
+  if (!['waha', 'evolution'].includes(provider)) throw new Error('WHATSAPP_PROVIDER deve ser waha ou evolution.');
+  if (provider === 'waha') {
+    const config = wahaConfig();
+    return config ? { ...config, provider: 'waha' as const } : null;
+  }
+  if (process.env.WHATSAPP_ENABLED !== 'true') return null;
+  const url = new URL(process.env.EVOLUTION_BASE_URL || '');
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('EVOLUTION_BASE_URL deve ser HTTP(S), sem credenciais ou parâmetros.');
+  const apiKey = process.env.EVOLUTION_API_KEY?.trim();
+  const session = process.env.EVOLUTION_INSTANCE?.trim();
+  if (!apiKey || !session) throw new Error('Configure EVOLUTION_API_KEY e EVOLUTION_INSTANCE no backend.');
+  return { provider: 'evolution' as const, baseUrl: url.toString().replace(/\/$/, ''), apiKey, session };
+}
+
 export function welcomeText(name: string) {
   return `Olá, ${name.split(' ')[0]}! 👋 Bem-vindo ao Bilhetou. Seu cadastro foi realizado com sucesso!\n\nEsta é a confirmação de cadastro que você solicitou no site.`;
 }
@@ -21,14 +37,14 @@ export function welcomeText(name: string) {
 @Injectable()
 export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WhatsappWelcomeService.name);
-  private config: ReturnType<typeof wahaConfig> = null;
+  private config: ReturnType<typeof whatsappConfig> = null;
   private timer?: ReturnType<typeof setInterval>;
   private running?: Promise<void>;
 
   constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit() {
-    this.config = wahaConfig();
+    this.config = whatsappConfig();
     if (!this.config) return;
     this.timer = setInterval(() => {
       if (!this.running) this.running = this.processNext()
@@ -47,7 +63,7 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
     const config = this.config!;
     return fetch(`${config.baseUrl}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: { 'X-Api-Key': config.apiKey, 'Content-Type': 'application/json' },
+      headers: { [config.provider === 'evolution' ? 'apikey' : 'X-Api-Key']: config.apiKey, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
       redirect: 'error',
@@ -60,7 +76,7 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
     // A crash after the POST may have delivered the message. Never resend blindly.
     await this.prisma.whatsappWelcome.updateMany({
       where: { status: 'PROCESSING', lockedAt: { lt: new Date(now.getTime() - 120000) } },
-      data: { status: 'UNKNOWN', lastError: 'Processamento interrompido; confira no WAHA antes de reenviar.' },
+      data: { status: 'UNKNOWN', lastError: 'Processamento interrompido; confira no provedor antes de reenviar.' },
     });
     await this.prisma.whatsappWelcome.updateMany({
       where: { status: 'PENDING', consentedAt: { lt: new Date(now.getTime() - maxAge) } },
@@ -78,22 +94,30 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
     const message = rows[0];
     let chatId: string;
     let stage = 'SESSION';
+    const evolution = this.config.provider === 'evolution';
+    const instance = encodeURIComponent(this.config.session);
     try {
-      const sessionResponse = await this.request(`/api/sessions/${encodeURIComponent(this.config.session)}`);
+      const sessionResponse = await this.request(evolution ? `/instance/connectionState/${instance}` : `/api/sessions/${instance}`);
       if (!sessionResponse.ok) throw new Error(`SESSION_HTTP_${sessionResponse.status}`);
-      const session = await sessionResponse.json() as { status?: string };
-      if (session.status !== 'WORKING') throw new Error('SESSION_NOT_WORKING');
+      const session = await sessionResponse.json() as { status?: string; instance?: { state?: string } };
+      if (evolution ? session.instance?.state !== 'open' : session.status !== 'WORKING') throw new Error('SESSION_NOT_WORKING');
       stage = 'CONTACT';
       // Ask WhatsApp for the canonical chatId (including Brazilian ninth-digit differences).
       const params = new URLSearchParams({ phone: `55${message.phone}`, session: this.config.session });
-      const contactResponse = await this.request(`/api/contacts/check-exists?${params}`, undefined, 60000);
+      const contactResponse = evolution
+        ? await this.request(`/chat/whatsappNumbers/${instance}`, { numbers: [`55${message.phone}`] }, 60000)
+        : await this.request(`/api/contacts/check-exists?${params}`, undefined, 60000);
       if (!contactResponse.ok) throw new Error(`CONTACT_HTTP_${contactResponse.status}`);
-      const contact = await contactResponse.json() as { numberExists?: boolean; chatId?: string };
+      const result = await contactResponse.json();
+      const contact: { numberExists?: boolean; chatId?: string } = evolution
+        ? (Array.isArray(result) && result.length === 1 ? { numberExists: result[0]?.exists, chatId: result[0]?.jid } : {})
+        : (result ?? {});
       if (contact.numberExists === false) {
         await this.finish(message, 'FAILED', 'Número não encontrado no WhatsApp.');
         return;
       }
-      if (contact.numberExists !== true || typeof contact.chatId !== 'string' || !/^\d+@(c\.us|lid)$/.test(contact.chatId)) throw new Error('INVALID_CONTACT_RESPONSE');
+      const validChatId = evolution ? /^\d+@(s\.whatsapp\.net|lid)$/ : /^\d+@(c\.us|lid)$/;
+      if (contact.numberExists !== true || typeof contact.chatId !== 'string' || !validChatId.test(contact.chatId)) throw new Error('INVALID_CONTACT_RESPONSE');
       chatId = contact.chatId;
     } catch (error) {
       // No send has occurred: these retries are safe.
@@ -112,22 +136,25 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const response = await this.request('/api/sendText', { session: this.config.session, chatId, text: welcomeText(message.name) });
+      const response = evolution
+        ? await this.request(`/message/sendText/${instance}`, { number: chatId, text: welcomeText(message.name) })
+        : await this.request('/api/sendText', { session: this.config.session, chatId, text: welcomeText(message.name) });
       if (!response.ok) {
         // Server errors can occur after sending. Treat them as ambiguous.
         await this.finish(message, response.status >= 500 ? 'UNKNOWN' : 'FAILED', `SEND_HTTP_${response.status}`);
         return;
       }
-      const result = await response.json() as { id?: unknown };
-      if (typeof result.id !== 'string' || !result.id) {
-        await this.finish(message, 'UNKNOWN', 'WAHA respondeu sem identificador; confira antes de reenviar.');
+      const result = await response.json() as { id?: unknown; key?: { id?: unknown } };
+      const providerMessageId = evolution ? result?.key?.id : result?.id;
+      if (typeof providerMessageId !== 'string' || !providerMessageId) {
+        await this.finish(message, 'UNKNOWN', 'Provedor respondeu sem identificador; confira antes de reenviar.');
         return;
       }
       await this.prisma.whatsappWelcome.update({ where: { id: message.id }, data: {
-        status: 'SENT', sentAt: new Date(), lockedAt: null, providerMessageId: result.id, lastError: null,
+        status: 'SENT', sentAt: new Date(), lockedAt: null, providerMessageId, lastError: null,
       } });
     } catch {
-      await this.finish(message, 'UNKNOWN', 'Resultado de envio incerto; confira no WAHA antes de reenviar.');
+      await this.finish(message, 'UNKNOWN', 'Resultado de envio incerto; confira no provedor antes de reenviar.');
     }
   }
 

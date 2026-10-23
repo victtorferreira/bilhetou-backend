@@ -1,4 +1,6 @@
-# Confirmação de cadastro via WAHA
+# Confirmação de cadastro por WhatsApp
+
+Para usar Evolution API no Railway, siga [EVOLUTION-RAILWAY.md](EVOLUTION-RAILWAY.md). Selecione `WHATSAPP_PROVIDER=evolution` e ative com `WHATSAPP_ENABLED=true`. O modo WAHA abaixo continua disponível como padrão (`WHATSAPP_PROVIDER=waha`), controlado por `WAHA_ENABLED`. A mesma fila atende ambos; a troca não reabre mensagens já finalizadas. Não há fallback automático após envio de resultado incerto.
 
 O formulário permite solicitar uma confirmação por WhatsApp (opcional, desmarcado inicialmente). O cadastro e a mensagem pendente são gravados na mesma transação PostgreSQL. A autorização registrada corresponde ao texto `welcome-v1`: “Quero receber a confirmação do meu cadastro pelo WhatsApp do Bilhetou.” Não autoriza campanhas promocionais.
 
