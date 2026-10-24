@@ -7,7 +7,7 @@ import { AppModule } from './app.module';
 import { allowedOrigins } from './security/origins';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.enableShutdownHooks();
   app.setGlobalPrefix('api');
   app.enableCors({ origin: allowedOrigins(), methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'], credentials: true });

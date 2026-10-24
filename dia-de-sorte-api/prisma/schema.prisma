@@ -33,6 +33,33 @@ model Organization {
   createdAt DateTime   @default(now())
   campaigns Campaign[]
   participants Participant[]
+  pixPayments PixPayment[]
+}
+
+// Administrative standalone charges; intentionally independent of raffle orders.
+model PixPayment {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  organization Organization @relation(fields: [organizationId], references: [id])
+  requestKey String @db.Uuid
+  environment String @db.VarChar(16)
+  description String @db.VarChar(140)
+  amountCents Int
+  status String @default("CREATING") @db.VarChar(24)
+  providerId String? @unique @db.VarChar(160)
+  brCode String?
+  expiresAt DateTime?
+  paidAt DateTime?
+  lastError String? @db.VarChar(160)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([organizationId, requestKey])
+  @@index([organizationId, createdAt])
+}
+
+model PaymentWebhookEvent {
+  id String @id @db.VarChar(160)
+  processedAt DateTime @default(now())
 }
 
 model Campaign {
