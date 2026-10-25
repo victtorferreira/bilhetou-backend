@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 import type { ParticipantSelectionDto } from './participant.dto';
+import { zettpayConfiguration } from '../payments/zettpay.client';
 
 const lifetime = 24 * 60 * 60 * 1000;
 const empty = () => ({ participant: null, campaign: null, availableCount: 0, selectedIds: [] as string[], selectedTickets: [], selectionKey: '', orders: [] });
@@ -33,6 +34,7 @@ export class ParticipantService {
     if (!session || session.expiresAt <= new Date() || session.participant.organizationId !== this.organizationId()) throw new UnauthorizedException('Sua sessão expirou. Faça seu cadastro para continuar.');
     return session;
   }
+  async paymentIdentity(token?: string) { return (await this.session(token)).participant; }
   private openCampaignWhere(organizationId: string): Prisma.CampaignWhereInput {
     return { organizationId, legacySample: false, status: 'OPEN', OR: [{ closesAt: null }, { closesAt: { gt: new Date() } }] };
   }
@@ -58,7 +60,10 @@ export class ParticipantService {
       participant: { id: session.participant.id, name: session.participant.name, phone: session.participant.phone, verification: 'unverified' },
       campaign: campaign ? { id: campaign.id, name: campaign.name, ticketPriceCents: campaign.ticketPriceCents, prizeCents: campaign.prizeCents, drawDate: campaign.closesAt?.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) ?? 'Data a definir', status: campaign.status } : null,
       availableCount, selectedIds: selected.map(t => t.id), selectedTickets: selected.map(t => this.ticket(t, campaign?.name, campaign?.closesAt)), selectionKey: session.selectionKey,
-      orders: orders.map(order => ({ id: order.id, participantId: order.participantId, campaignId: order.campaignId, ticketIds: order.tickets.map(t => t.id), totalCents: order.totalCents, createdAt: order.createdAt.toISOString(), idempotencyKey: order.idempotencyKey, status: 'registered', paymentStatus: 'UNPAID', tickets: order.tickets.map(t => this.ticket(t, order.campaign.name, order.campaign.closesAt)) })),
+      orders: orders.map(order => {
+        const visible = !order.paymentRequired || order.paymentStatus === 'PAID' ? order.tickets : [];
+        return { id: order.id, participantId: order.participantId, campaignId: order.campaignId, ticketIds: visible.map(t => t.id), totalCents: order.totalCents, quantity: order.quantity, createdAt: order.createdAt.toISOString(), idempotencyKey: order.idempotencyKey, status: 'registered', paymentRequired: order.paymentRequired ?? false, paymentStatus: order.paymentStatus || 'UNPAID', tickets: visible.map(t => this.ticket(t, order.campaign.name, order.campaign.closesAt)) };
+      }),
     };
   }
   async current(token?: string) {
@@ -147,6 +152,7 @@ export class ParticipantService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
   async confirm(token: string | undefined, key: string) {
+    if (process.env.ZETTPAY_ENABLED === 'true') zettpayConfiguration();
     return this.prisma.$transaction(async tx => {
       const session = await this.lockedSession(token, tx);
       const previous = await tx.order.findUnique({ where: { participantId_idempotencyKey: { participantId: session.participantId, idempotencyKey: key } } });
@@ -155,7 +161,7 @@ export class ParticipantService {
       const campaign = await this.campaign(session, tx);
       const selected = await tx.ticket.findMany({ where: { id: { in: session.selectedIds }, campaignId: campaign.id, status: 'AVAILABLE' }, select: { id: true } });
       if (selected.length !== session.selectedIds.length) throw new ConflictException('Algum bilhete já foi atribuído. Escolha seus bilhetes novamente.');
-      const order = await tx.order.create({ data: { campaignId: campaign.id, participantId: session.participantId, idempotencyKey: key, quantity: selected.length, totalCents: selected.length * campaign.ticketPriceCents } });
+      const order = await tx.order.create({ data: { campaignId: campaign.id, participantId: session.participantId, idempotencyKey: key, quantity: selected.length, totalCents: selected.length * campaign.ticketPriceCents, paymentRequired: process.env.ZETTPAY_ENABLED === 'true' } });
       const result = await tx.ticket.updateMany({ where: { id: { in: selected.map(t => t.id) }, campaignId: campaign.id, status: 'AVAILABLE' }, data: { status: 'ASSIGNED', orderId: order.id, assignedAt: new Date() } });
       if (result.count !== selected.length) throw new ConflictException('O estoque mudou. Escolha seus bilhetes novamente.');
       const updated = await tx.participantSession.update({ where: { id: session.id }, data: { selectedIds: [], selectionKey: randomUUID() }, include: { participant: true } });

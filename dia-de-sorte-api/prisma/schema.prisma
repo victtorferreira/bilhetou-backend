@@ -36,7 +36,7 @@ model Organization {
   pixPayments PixPayment[]
 }
 
-// Administrative standalone charges; intentionally independent of raffle orders.
+// Historical standalone financial records. Retained for accounting; no active gateway uses this model.
 model PixPayment {
   id String @id @default(uuid()) @db.Uuid
   organizationId String @db.Uuid
@@ -133,12 +133,31 @@ model Order {
   legacySample  Boolean @default(false)
   quantity      Int
   totalCents    Int
+  paymentRequired Boolean @default(false)
+  paymentStatus String @default("UNPAID") @db.VarChar(24)
+  zettpayPayment ZettpayPayment?
   createdAt     DateTime @default(now())
   tickets       Ticket[]
   participantId String? @db.Uuid
   participant Participant? @relation(fields: [participantId], references: [id])
   idempotencyKey String? @db.Uuid
   @@unique([participantId, idempotencyKey])
+}
+
+model ZettpayPayment {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @unique @db.Uuid
+  order Order @relation(fields: [orderId], references: [id])
+  amountCents Int
+  status String @default("CREATING") @db.VarChar(24)
+  providerId String? @unique @db.VarChar(160)
+  providerStatus String? @db.VarChar(64)
+  qrCode String?
+  paidAt DateTime?
+  lastError String? @db.VarChar(160)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, createdAt])
 }
 
 // A phone supplied at registration does not prove ownership.

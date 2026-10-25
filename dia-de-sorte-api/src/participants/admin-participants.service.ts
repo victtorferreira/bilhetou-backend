@@ -64,8 +64,8 @@ export class AdminParticipantsService {
       const where = { ...this.orderScope(organizationId), participantId: id };
       const total = await tx.order.count({ where });
       const { skip, ...paging } = pagination(total, requestedPage);
-      const orders = await tx.order.findMany({ where, select: { id: true, createdAt: true, quantity: true, totalCents: true, campaign: { select: { id: true, name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip, take: pageSize });
-      return { ...paging, items: orders.map(order => ({ ...order, status: 'REGISTERED', paymentStatus: 'UNPAID' })) };
+      const orders = await tx.order.findMany({ where, select: { id: true, createdAt: true, quantity: true, totalCents: true, paymentStatus: true, campaign: { select: { id: true, name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip, take: pageSize });
+      return { ...paging, items: orders.map(order => ({ ...order, status: 'REGISTERED', paymentStatus: order.paymentStatus || 'UNPAID' })) };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
   async tickets(organizationId: string, id: string, requestedPage: number) {
