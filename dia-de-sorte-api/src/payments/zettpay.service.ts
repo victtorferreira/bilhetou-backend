@@ -54,7 +54,7 @@ export class ZettpayService {
     }
     try {
       const data = await this.client.create({ id: payment.id, orderId, amountCents: payment.amountCents, payerName: identity.name, payerEmail, payerDocument: input.payerDocument.replace(/\D/g, '') });
-      await this.apply(payment, data);
+      await this.apply(payment, data, 'creation');
     } catch (error) {
       const code = error instanceof Error && /^ZETTPAY_(?:AUTH_HTTP_\d{3}|HTTP_\d{3}|AUTH_INVALID|INVALID_RESPONSE|REQUEST_UNCERTAIN|TRANSACTION_MISMATCH)$/.test(error.message) ? `${error.message}. ` : '';
       await this.prisma.zettpayPayment.updateMany({ where: { id: payment.id, status: { not: 'PAID' } }, data: { status: 'UNKNOWN', lastError: `${code}Confirmação da cobrança pendente. Consulte novamente; não crie outro pedido para repetir o pagamento.` } });
@@ -62,12 +62,15 @@ export class ZettpayService {
     return this.current(token, orderId);
   }
 
-  private async apply(payment: ZettpayPayment, data: any) {
+  private async apply(payment: ZettpayPayment, data: any, source: 'creation' | 'lookup' = 'lookup') {
     const config = zettpayConfiguration();
     const providerId = zettpayId(data?.id);
     const mismatches: string[] = [];
     if (!providerId) mismatches.push('id_invalido');
-    else if (payment.providerId && payment.providerId !== providerId) mismatches.push('id_divergente');
+    // Each endpoint has its own identifier namespace. Cross-endpoint equality is
+    // not required; the authenticated lookup is bound by external_id and gross value.
+    const expectedId = source === 'creation' ? payment.providerId : payment.lookupProviderId;
+    if (providerId && expectedId && expectedId !== providerId) mismatches.push('id_divergente');
     if (data?.external_id !== payment.id) mismatches.push('referencia_divergente');
     if (reaisToCents(data?.amount) !== payment.amountCents) mismatches.push('valor_divergente');
     if (data?.currency !== undefined && data.currency !== 'BRL') mismatches.push('moeda_divergente');
@@ -79,9 +82,13 @@ export class ZettpayService {
     await this.prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM "ZettpayPayment" WHERE id = ${payment.id}::uuid FOR UPDATE`;
       const current = await tx.zettpayPayment.findUniqueOrThrow({ where: { id: payment.id } });
+      // Recheck under the lock: concurrent first lookups cannot bind different IDs.
+      const currentExpectedId = source === 'creation' ? current.providerId : current.lookupProviderId;
+      if (currentExpectedId && currentExpectedId !== providerId) this.mismatch(payment.id, ['id_divergente']);
       const alreadyPaid = current.status === 'PAID';
       await tx.zettpayPayment.update({ where: { id: payment.id }, data: {
-        providerId, providerStatus: alreadyPaid ? current.providerStatus : data.status,
+        ...(source === 'creation' ? { providerId } : { lookupProviderId: providerId }),
+        providerStatus: alreadyPaid ? current.providerStatus : data.status,
         status: paid || alreadyPaid ? 'PAID' : data.status === 'pending' && (qrCode || current.qrCode) ? 'PENDING' : 'UNKNOWN',
         ...(qrCode ? { qrCode } : {}),
         ...(paid && !current.paidAt ? { paidAt: new Date() } : {}),
@@ -117,7 +124,8 @@ export class ZettpayService {
     const data = await this.client.lookup(payment.id);
     if (!data) throw new ServiceUnavailableException('Transação ainda não disponível para consulta.');
     // Body fields are never proof of receipt; lookup validates value, reference and status.
-    if (zettpayId(event.id) !== zettpayId(data.id)) this.mismatch(payment.id, ['id_webhook_divergente']);
+    const eventProviderId = zettpayId(event.id);
+    if (!eventProviderId || ![payment.providerId, payment.lookupProviderId, zettpayId(data.id)].includes(eventProviderId)) this.mismatch(payment.id, ['id_webhook_divergente']);
     await this.apply(payment, data);
     if (event.status === config.paidStatus && data.status !== config.paidStatus && payment.status !== 'PAID') throw new ServiceUnavailableException('Pagamento ainda não confirmado na consulta.');
     await this.prisma.paymentWebhookEvent.upsert({ where: { id: eventId }, create: { id: eventId }, update: {} });

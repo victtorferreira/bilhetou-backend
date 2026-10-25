@@ -29,7 +29,7 @@ function fixture() {
     zettpayPayment: {
       create: async ({ data }) => {
         if (payments.size) throw Object.assign(new Error('duplicate'), { code: 'P2002' });
-        const row = { id: randomUUID(), ...data, status: 'CREATING', providerId: null, qrCode: null, paidAt: null, providerStatus: null, lastError: null };
+        const row = { id: randomUUID(), ...data, status: 'CREATING', providerId: null, lookupProviderId: null, qrCode: null, paidAt: null, providerStatus: null, lastError: null };
         payments.set(row.id, row); return { ...row };
       },
       findUnique: async ({ where }) => { const row = where.id ? payments.get(where.id) : [...payments.values()].find(row => row.orderId === where.orderId); return row ? { ...row } : null; },
@@ -157,6 +157,7 @@ test('mismatched amount/reference/id/currency never confirms the order; 404 neve
     const f = fixture();
     await f.service.create('my-session', f.order.id, payer);
     const payment = [...f.payments.values()][0];
+    payment.lookupProviderId = '33';
     f.client.lookup = async () => ({ id: 33, external_id: payment.id, status: 'approved', amount: '2.00', currency: 'BRL', ...override });
     await assert.rejects(f.service.check('my-session', f.order.id), /MISMATCH/);
     assert.equal(f.order.paymentStatus, 'UNPAID');
@@ -181,6 +182,7 @@ test('mismatch diagnostics identify fields without exposing provider payload or 
   await f.service.create('my-session', f.order.id, payer);
   const warnings = [];
   f.service.logger.warn = value => warnings.push(value);
+  [...f.payments.values()][0].lookupProviderId = '33';
   f.client.lookup = async () => ({ id: 'different-id', external_id: 'private-reference', amount: '9.99', currency: 'USD', status: 'approved', payer_document: 'sensitive-document', payer_email: 'private@example.com' });
   await assert.rejects(f.service.check('my-session', f.order.id), error => {
     const body = error.getResponse();
@@ -210,6 +212,54 @@ test('documented lookup response approved with opaque transaction ID and string 
   assert.equal(result.payment.status, 'PAID');
   assert.equal(payment.providerStatus, 'approved');
   assert.equal(result.payment.amountCents, 200);
+}));
+
+test('numeric creation ID and opaque lookup ID are bound separately and existing charges recover without another POST', async () => configured(async () => {
+  const f = fixture();
+  await f.service.create('my-session', f.order.id, payer);
+  const payment = [...f.payments.values()][0];
+  assert.equal(payment.providerId, '33'); assert.equal(payment.lookupProviderId, null);
+  const canonicalId = 'CC7AD36013FEA1B2C3D4E2AA4070';
+  f.client.lookup = async () => ({ id: canonicalId, external_id: payment.id, status: 'pending', amount: '2.00', qr_code: '000201-test-pix' });
+  const pending = await f.service.check('my-session', f.order.id);
+  assert.equal(pending.payment.status, 'PENDING');
+  assert.equal(payment.providerId, '33'); assert.equal(payment.lookupProviderId, canonicalId);
+  assert.equal(f.posts(), 1);
+  const stale = { ...payment, lookupProviderId: null };
+  await assert.rejects(f.service.apply(stale, { id: 'OTHER_LOOKUP_ID', external_id: payment.id, status: 'approved', amount: '2.00' }), /MISMATCH/);
+  assert.equal(f.order.paymentStatus, 'UNPAID'); assert.equal(payment.lookupProviderId, canonicalId);
+  f.client.lookup = async () => ({ id: canonicalId, external_id: payment.id, status: 'approved', amount: '2.00' });
+  assert.equal((await f.service.check('my-session', f.order.id)).order.paymentStatus, 'PAID');
+  assert.equal(payment.providerId, '33'); assert.equal(f.posts(), 1);
+}));
+
+test('a first lookup with another ID cannot bind or confirm if value or external reference differs', async () => configured(async () => {
+  for (const override of [{ amount: '9.99' }, { external_id: randomUUID() }]) {
+    const f = fixture(); await f.service.create('my-session', f.order.id, payer);
+    const payment = [...f.payments.values()][0];
+    f.client.lookup = async () => ({ id: 'LOOKUP_NEW_ID', external_id: payment.id, amount: '2.00', status: 'approved', ...override });
+    await assert.rejects(f.service.check('my-session', f.order.id), /MISMATCH/);
+    assert.equal(payment.lookupProviderId, null); assert.equal(payment.providerId, '33');
+    assert.equal(f.order.paymentStatus, 'UNPAID');
+  }
+}));
+
+test('signed webhook accepts the stored creation ID or canonical lookup ID and rejects unrelated IDs', async () => configured(async () => {
+  for (const eventId of [33, 'LOOKUP_CANONICAL', 'UNRELATED_ID']) {
+    const f = fixture(); await f.service.create('my-session', f.order.id, payer);
+    const payment = [...f.payments.values()][0];
+    f.client.lookup = async () => ({ id: 'LOOKUP_CANONICAL', external_id: payment.id, amount: '2.00', status: 'approved' });
+    const event = { type: 'cashin', id: eventId, external_id: payment.id, status: 'approved' };
+    const raw = Buffer.from(JSON.stringify(event)); const t = Math.floor(Date.now() / 1000);
+    const sig = createHmac('sha256', process.env.ZETTPAY_WEBHOOK_SIGNING_SECRET).update(`${t}.`).update(raw).digest('hex');
+    const delivery = f.service.webhook(`t=${t},v1=${sig}`, raw, event);
+    if (eventId === 'UNRELATED_ID') {
+      await assert.rejects(delivery, /MISMATCH/); assert.equal(f.order.paymentStatus, 'UNPAID');
+    } else {
+      await delivery; assert.equal(f.order.paymentStatus, 'PAID');
+      assert.equal(payment.providerId, '33'); assert.equal(payment.lookupProviderId, 'LOOKUP_CANONICAL');
+    }
+  }
 }));
 
 test('timestamped webhook signatures use exact raw bytes, reject replay/forgery, and accept a valid rotated signature', () => {
@@ -301,14 +351,17 @@ test('PostgreSQL: pending order hides tickets, concurrent checkout charges once 
     assert.equal(confirmed.orders[0].paymentRequired, true);
     let posts = 0; let status = 'pending';
     const providerId = `test_${randomUUID()}`;
+    const creationId = Date.now();
     const transaction = id => ({ id: providerId, external_id: id, amount: '2.00', status, qr_code: '000201-integration-test' });
-    const client = { create: async input => { posts++; return transaction(input.id); }, lookup: async id => transaction(id) };
+    const client = { create: async input => { posts++; return { ...transaction(input.id), id: creationId }; }, lookup: async id => transaction(id) };
     const workers = [new ZettpayService(prisma, participants, client), new ZettpayService(prisma, participants, client)];
     const orderId = confirmed.orders[0].id;
     await Promise.all(workers.map(worker => worker.create(registered.token, orderId, payer)));
     assert.equal(posts, 1);
     assert.equal((await participants.current(registered.token)).orders[0].tickets.length, 0);
     status = 'approved'; await workers[0].check(registered.token, orderId);
+    const stored = await prisma.zettpayPayment.findUnique({ where: { orderId } });
+    assert.equal(stored.providerId, String(creationId)); assert.equal(stored.lookupProviderId, providerId);
     const paid = await participants.current(registered.token);
     assert.equal(paid.orders[0].paymentStatus, 'PAID'); assert.equal(paid.orders[0].tickets.length, 1);
   } finally {

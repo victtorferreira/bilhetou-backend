@@ -151,6 +151,7 @@ model ZettpayPayment {
   amountCents Int
   status String @default("CREATING") @db.VarChar(24)
   providerId String? @unique @db.VarChar(160)
+  lookupProviderId String? @unique @db.VarChar(160)
   providerStatus String? @db.VarChar(64)
   qrCode String?
   paidAt DateTime?

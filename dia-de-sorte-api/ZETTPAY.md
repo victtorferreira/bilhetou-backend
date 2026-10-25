@@ -18,6 +18,8 @@ Publique as alterações nos dois repositórios, nas branches que Railway e Verc
 
 O Dockerfile já gera o cliente Prisma. Mantenha `npm run prisma:deploy` como pre-deploy no Railway. A migração adiciona os campos `Order.paymentRequired`/`paymentStatus` e a tabela `ZettpayPayment`. Não apaga ou cobra pedidos existentes. A tabela `PaymentWebhookEvent`, criada pela migração anterior de pagamentos Pix, é reutilizada com prefixo próprio para os eventos Zettpay.
 
+A correção de identificadores inclui a migração `202610250002_zettpay_lookup_id`: adiciona `lookupProviderId` sem apagar ou substituir o `providerId` salvo na criação. Inclua também essa pasta no commit e aplique a migração antes de iniciar o novo backend. O pagamento existente é recuperado pela próxima consulta; não exige gerar outra cobrança.
+
 ## 2. Credenciais e webhook assinado
 
 No painel Zettpay, obtenha `client_id` e `client_secret` com acesso à criação e consulta de cobranças. Não coloque credenciais no frontend/Vercel nem as compartilhe em chats ou prints.
@@ -63,7 +65,7 @@ A Zettpay é o único gateway de pagamento integrado na aplicação. Não é nec
 6. Confira também o webhook no painel Zettpay e o estado do pagamento no Postgres do Bilhetou. O admin de participantes passa a mostrar Pago para pedidos confirmados.
 
 ```sql
-SELECT p."id", p."orderId", p."amountCents", p."status",
+SELECT p."id", p."orderId", p."providerId", p."lookupProviderId", p."amountCents", p."status",
        p."providerStatus", p."paidAt", p."lastError",
        o."paymentStatus"
 FROM "ZettpayPayment" p
@@ -78,6 +80,7 @@ Essa consulta não exibe e-mail nem documento do pagador. Os testes automatizado
 - Uma cobrança local por pedido, garantida por índice único antes do POST externo. A chave externa é `bilhetou-{payment.id}` e o `external_id` é esse mesmo ID local, sem o prefixo.
 - O valor é armazenado em centavos no banco e convertido para reais para a API. A resposta é convertida com duas casas, sem aceitar arredondamentos ambíguos. Taxa (`fee`) não substitui o valor bruto do pedido na conferência.
 - A resposta só é aceita se ID externo, `external_id`, moeda quando presente e valor corresponderem ao registro local. `processing`, `pending` ou corpo enviado pelo cliente nunca confirmam recebimento.
+- A criação e a consulta podem retornar IDs diferentes para a mesma cobrança. `providerId` preserva o ID da criação; `lookupProviderId` é vinculado na primeira consulta autenticada com `external_id` e valor exatos. Consultas posteriores devem manter esse ID, conferido novamente sob bloqueio no banco. Um webhook pode identificar a cobrança pelo ID da criação ou pelo ID da consulta; a assinatura e a nova consulta à API continuam obrigatórias.
 - Timeout, reinício ou resposta ambígua deixam a cobrança em conferência. Consultas posteriores usam `GET /transactions/lookup?external_id=...`, inclusive para recuperar um ID externo que não chegou a ser salvo. Não há repetição automática do POST nem criação de outra cobrança para o mesmo pedido.
 - Webhook de `type: cashin` é autenticado e provoca nova consulta à API. Os dados do webhook não são usados como prova isolada de pagamento. Webhooks de cash-out e recorrência são ignorados.
 - Duplicatas de webhook são identificadas pelo hash do corpo assinado. Pagamento e pedido são atualizados juntos em transação com bloqueio do registro; mensagens atrasadas não rebaixam um pagamento confirmado.
