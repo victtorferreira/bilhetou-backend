@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, ParseUUIDPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseUUIDPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { AdminAuth, type AdminRequest } from './admin-auth';
 import { AdminTicketService } from './admin-ticket.service';
 import { AdminLoginDto, CheckDrawDto, CreateCampaignDto, ImportTicketsDto, NumberSearchDto } from './admin.dto';
@@ -28,6 +28,7 @@ export class AdminSessionController {
 export class AdminTicketsController {
   constructor(private readonly service: AdminTicketService, private readonly creation: TicketCreationService) {}
   @Get('campaigns') campaigns(@Req() req: AdminRequest) { return this.service.campaigns(req.admin.organizationId); }
+  @Delete('campaigns/:id') deleteCampaign(@Req() req: AdminRequest, @Param('id', ParseUUIDPipe) id: string) { return this.service.deleteCampaign(req.admin.organizationId, id); }
   @Post('campaigns') createCampaign(@Req() req: AdminRequest, @Body() dto: CreateCampaignDto) { return this.service.createCampaign(req.admin.organizationId, dto); }
   @Get('campaigns/:id/ticket-statistics') stats(@Req() req: AdminRequest, @Param('id', ParseUUIDPipe) id: string) { return this.service.statistics(req.admin.organizationId, id); }
   @Get('campaigns/:id/tickets') stock(@Req() req: AdminRequest, @Param('id', ParseUUIDPipe) id: string, @Query() q: TicketStockQueryDto) { return this.service.stock(req.admin.organizationId, id, q.page, q.query); }

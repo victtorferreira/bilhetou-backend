@@ -36,6 +36,12 @@ A confirmação vincula os bilhetes ao participante com uma transação e chave 
 
 Os dados de preparação anteriores são arquivados pela migração de transição e não entram no catálogo ou nos novos pedidos. Nenhum script cria estoque automaticamente durante a inicialização.
 
+## Exclusão de campanhas
+
+Em `/admin/campanhas`, cada campanha oferece **Excluir campanha**, com confirmação e cancelamento. A rota autenticada `DELETE /api/admin/campaigns/:id` usa a organização da sessão. A exclusão grava `deletedAt` e muda o status para `ARCHIVED`; a campanha sai do catálogo e dos seletores administrativos e deixa de aceitar novos pedidos ou geração/importação de bilhetes. Pedidos, pagamentos, bilhetes e conferências existentes permanecem armazenados e os históricos de pedidos continuam disponíveis.
+
+Antes de iniciar a API atualizada, aplique a migração `202610250003_campaign_deletion` com `npm run prisma:deploy` e gere o cliente com `npm run prisma:generate`. O deploy no Railway já executa esses passos pelo Dockerfile e pelo comando de pré-deploy. A migração adiciona somente uma coluna opcional, sem excluir registros.
+
 ## Participantes no painel
 
 A aba `/admin/participantes` lista os cadastros da organização autenticada, com busca por nome/WhatsApp, filtro por campanha e por existência de pedidos, e paginação de 20 registros. A listagem retorna contato mascarado; os detalhes autenticados exibem o contato completo, totais, pedidos e bilhetes paginados. Campanhas e pedidos de preparação arquivados não entram nos totais.

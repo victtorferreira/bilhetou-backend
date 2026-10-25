@@ -24,7 +24,7 @@ export class TicketCreationService {
 
   private async eligibleCampaign(tx: Prisma.TransactionClient, campaignId: string, organizationId: string) {
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
-    if (!campaign || campaign.organizationId !== organizationId || campaign.legacySample) throw new NotFoundException('Campanha não encontrada.');
+    if (!campaign || campaign.organizationId !== organizationId || campaign.legacySample || campaign.deletedAt) throw new NotFoundException('Campanha não encontrada.');
     if (!['DRAFT', 'OPEN'].includes(campaign.status) || (campaign.closesAt && campaign.closesAt <= new Date())) throw new ConflictException('A campanha está encerrada ou indisponível.');
     return campaign;
   }

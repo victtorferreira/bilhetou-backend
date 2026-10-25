@@ -36,7 +36,7 @@ export class ParticipantService {
   }
   async paymentIdentity(token?: string) { return (await this.session(token)).participant; }
   private openCampaignWhere(organizationId: string): Prisma.CampaignWhereInput {
-    return { organizationId, legacySample: false, status: 'OPEN', OR: [{ closesAt: null }, { closesAt: { gt: new Date() } }] };
+    return { organizationId, legacySample: false, deletedAt: null, status: 'OPEN', OR: [{ closesAt: null }, { closesAt: { gt: new Date() } }] };
   }
   private async defaultCampaign(tx: Prisma.TransactionClient, organizationId: string) {
     return tx.campaign.findFirst({ where: { ...this.openCampaignWhere(organizationId), ...(process.env.PUBLIC_CAMPAIGN_ID ? { id: process.env.PUBLIC_CAMPAIGN_ID } : {}) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
@@ -47,7 +47,7 @@ export class ParticipantService {
       date: closesAt?.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) ?? 'Data a definir', status: ticket.status === 'AVAILABLE' ? 'Disponível' : 'Atribuído' };
   }
   private async snapshot(session: Session, tx: Prisma.TransactionClient) {
-    let campaign = session.campaignId ? await tx.campaign.findFirst({ where: { id: session.campaignId, organizationId: session.participant.organizationId, legacySample: false } }) : null;
+    let campaign = session.campaignId ? await tx.campaign.findFirst({ where: { id: session.campaignId, organizationId: session.participant.organizationId, legacySample: false, deletedAt: null } }) : null;
     if (!campaign) {
       campaign = await this.defaultCampaign(tx, session.participant.organizationId);
       if (campaign) session = await tx.participantSession.update({ where: { id: session.id }, data: { campaignId: campaign.id, selectedIds: [], selectionKey: randomUUID() }, include: { participant: true } });

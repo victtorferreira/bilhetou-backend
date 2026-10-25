@@ -19,7 +19,7 @@ test('registration excludes seeded campaigns and does not automatically create c
   const previous = process.env.PUBLIC_ORGANIZATION_ID;
   process.env.PUBLIC_ORGANIZATION_ID = 'ORG';
   try {
-    const tx = { organization: { findUnique: async () => ({ id: 'ORG' }) }, campaign: { findFirst: async ({ where }) => { assert.equal(where.organizationId, 'ORG'); assert.equal(where.legacySample, false); assert.equal(where.status, 'OPEN'); return null; } } };
+    const tx = { organization: { findUnique: async () => ({ id: 'ORG' }) }, campaign: { findFirst: async ({ where }) => { assert.equal(where.organizationId, 'ORG'); assert.equal(where.legacySample, false); assert.equal(where.deletedAt, null); assert.equal(where.status, 'OPEN'); return null; } } };
     const service = new ParticipantService({ $transaction: async cb => cb(tx) });
     await assert.rejects(service.register('Maria Silva', '98999999999'), /Nenhuma campanha aberta/);
   } finally { if (previous === undefined) delete process.env.PUBLIC_ORGANIZATION_ID; else process.env.PUBLIC_ORGANIZATION_ID = previous; }

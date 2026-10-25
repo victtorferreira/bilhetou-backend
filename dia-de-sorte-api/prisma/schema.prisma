@@ -74,6 +74,7 @@ model Campaign {
   legacySample   Boolean @default(false)
   closesAt       DateTime?
   createdAt      DateTime       @default(now())
+  deletedAt      DateTime?
   tickets        Ticket[]
   draws          Draw[]
   orders     Order[]

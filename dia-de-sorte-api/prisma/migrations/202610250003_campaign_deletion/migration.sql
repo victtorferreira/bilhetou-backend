@@ -1,0 +1,1 @@
+ALTER TABLE "Campaign" ADD COLUMN "deletedAt" TIMESTAMP(3);

@@ -13,12 +13,21 @@ export function ticketConflict(error: unknown): never {
 export class AdminTicketService {
   constructor(private readonly prisma: PrismaService) {}
   async campaign(organizationId: string, id: string, tx: Prisma.TransactionClient = this.prisma) {
-    const campaign = await tx.campaign.findFirst({ where: { id, organizationId, legacySample: false } });
+    const campaign = await tx.campaign.findFirst({ where: { id, organizationId, legacySample: false, deletedAt: null } });
     if (!campaign) throw new NotFoundException('Campanha não encontrada.');
     return campaign;
   }
   campaigns(organizationId: string) {
-    return this.prisma.campaign.findMany({ where: { organizationId, legacySample: false }, include: { _count: { select: { tickets: true } } }, orderBy: { createdAt: 'desc' } });
+    return this.prisma.campaign.findMany({ where: { organizationId, legacySample: false, deletedAt: null }, include: { _count: { select: { tickets: true } } }, orderBy: { createdAt: 'desc' } });
+  }
+  async deleteCampaign(organizationId: string, id: string) {
+    return this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${id}::uuid AND "organizationId" = ${organizationId}::uuid FOR UPDATE`;
+      await this.campaign(organizationId, id, tx);
+      // Preserve orders, payments, tickets and draw observations as historical records.
+      await tx.campaign.update({ where: { id }, data: { status: 'ARCHIVED', deletedAt: new Date() } });
+      return { id, deleted: true };
+    });
   }
   async createCampaign(organizationId: string, input: CreateCampaignDto) {
     if (input.name.trim().length < 3) throw new ConflictException('Informe um nome válido para a campanha.');
@@ -28,7 +37,7 @@ export class AdminTicketService {
   }
   async dashboard(organizationId: string) {
     return this.prisma.$transaction(async tx => {
-      const campaign = { organizationId, legacySample: false };
+      const campaign = { organizationId, legacySample: false, deletedAt: null };
       const [tickets, available, assigned, campaigns, orders, participants] = await Promise.all([
         tx.ticket.count({ where: { campaign } }),
         tx.ticket.count({ where: { campaign, status: 'AVAILABLE' } }),
