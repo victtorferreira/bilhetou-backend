@@ -176,6 +176,28 @@ test('confirmed cash-in updates payment and order atomically and never downgrade
   assert.equal(f.order.paymentStatus, 'PAID'); assert.equal(payment.status, 'PAID');
 }));
 
+test('mismatch diagnostics identify fields without exposing provider payload or changing payment status', async () => configured(async () => {
+  const f = fixture();
+  await f.service.create('my-session', f.order.id, payer);
+  const warnings = [];
+  f.service.logger.warn = value => warnings.push(value);
+  f.client.lookup = async () => ({ id: 'different-id', external_id: 'private-reference', amount: '9.99', currency: 'USD', status: 'approved', payer_document: 'sensitive-document', payer_email: 'private@example.com' });
+  await assert.rejects(f.service.check('my-session', f.order.id), error => {
+    const body = error.getResponse();
+    assert.equal(body.code, 'ZETTPAY_TRANSACTION_MISMATCH');
+    assert.deepEqual(body.fields, ['id_divergente', 'referencia_divergente', 'valor_divergente', 'moeda_divergente']);
+    assert.ok(!JSON.stringify(body).includes('private'));
+    assert.ok(!JSON.stringify(body).includes('sensitive-document'));
+    assert.ok(!body.message.includes('ZETTPAY_TRANSACTION_MISMATCH'));
+    return true;
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /campos=id_divergente,referencia_divergente,valor_divergente,moeda_divergente/);
+  assert.ok(!warnings[0].includes('sensitive-document'));
+  assert.ok(!warnings[0].includes('private@example.com'));
+  assert.equal(f.order.paymentStatus, 'UNPAID');
+}));
+
 test('documented lookup response approved with opaque transaction ID and string reais confirms the matching order', async () => configured(async () => {
   const f = fixture();
   const id = 'CC7AD36013FEA1B2C3D4E2AA4070';

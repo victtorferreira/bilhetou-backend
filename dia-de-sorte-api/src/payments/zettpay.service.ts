@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ParticipantService } from '../participants/participant.service';
@@ -7,7 +7,20 @@ import { reaisToCents, validPayerDocument, verifyZettpaySignature, zettpayConfig
 
 @Injectable()
 export class ZettpayService {
+  private readonly logger = new Logger(ZettpayService.name);
   constructor(private readonly prisma: PrismaService, private readonly participants: ParticipantService, private readonly client: ZettpayClient) {}
+
+  private mismatch(paymentId: string, fields: string[]): never {
+    // Report controlled field names only; provider payloads contain payer documents and email.
+    this.logger.warn(`ZETTPAY_TRANSACTION_MISMATCH pagamento=${paymentId} campos=${fields.join(',')}`);
+    const error = new BadGatewayException({
+      message: 'Não foi possível conferir os dados da cobrança. Consulte o suporte antes de repetir o pagamento.',
+      code: 'ZETTPAY_TRANSACTION_MISMATCH', fields,
+    });
+    // Keep the internal code used by creation recovery without exposing it as UI copy.
+    error.message = 'ZETTPAY_TRANSACTION_MISMATCH';
+    throw error;
+  }
 
   private async ownedOrder(token: string | undefined, id: string) {
     const identity = await this.participants.paymentIdentity(token);
@@ -52,7 +65,14 @@ export class ZettpayService {
   private async apply(payment: ZettpayPayment, data: any) {
     const config = zettpayConfiguration();
     const providerId = zettpayId(data?.id);
-    if (!providerId || (payment.providerId && payment.providerId !== providerId) || data.external_id !== payment.id || reaisToCents(data.amount) !== payment.amountCents || (data.currency !== undefined && data.currency !== 'BRL') || typeof data.status !== 'string' || !/^[A-Za-z_]{2,64}$/.test(data.status)) throw new BadGatewayException('ZETTPAY_TRANSACTION_MISMATCH');
+    const mismatches: string[] = [];
+    if (!providerId) mismatches.push('id_invalido');
+    else if (payment.providerId && payment.providerId !== providerId) mismatches.push('id_divergente');
+    if (data?.external_id !== payment.id) mismatches.push('referencia_divergente');
+    if (reaisToCents(data?.amount) !== payment.amountCents) mismatches.push('valor_divergente');
+    if (data?.currency !== undefined && data.currency !== 'BRL') mismatches.push('moeda_divergente');
+    if (typeof data?.status !== 'string' || !/^[A-Za-z_]{2,64}$/.test(data.status)) mismatches.push('status_invalido');
+    if (mismatches.length) this.mismatch(payment.id, mismatches);
     const paid = data.status === config.paidStatus;
     const qrCode = typeof data.qr_code === 'string' && data.qr_code.startsWith('000201') && data.qr_code.length <= 10000 ? data.qr_code : null;
     // One transaction commits both the provider result and the order's payment state.
@@ -97,7 +117,7 @@ export class ZettpayService {
     const data = await this.client.lookup(payment.id);
     if (!data) throw new ServiceUnavailableException('Transação ainda não disponível para consulta.');
     // Body fields are never proof of receipt; lookup validates value, reference and status.
-    if (zettpayId(event.id) !== zettpayId(data.id)) throw new BadGatewayException('ZETTPAY_TRANSACTION_MISMATCH');
+    if (zettpayId(event.id) !== zettpayId(data.id)) this.mismatch(payment.id, ['id_webhook_divergente']);
     await this.apply(payment, data);
     if (event.status === config.paidStatus && data.status !== config.paidStatus && payment.status !== 'PAID') throw new ServiceUnavailableException('Pagamento ainda não confirmado na consulta.');
     await this.prisma.paymentWebhookEvent.upsert({ where: { id: eventId }, create: { id: eventId }, update: {} });

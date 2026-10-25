@@ -95,4 +95,14 @@ Pedidos anteriores à ativação mantêm `paymentRequired=false` e o comportamen
 
 ## Limites desta entrega
 
+### Diagnóstico de divergência da transação
+
+`ZETTPAY_TRANSACTION_MISMATCH` significa que a resposta recebida não corresponde aos dados esperados; não significa necessariamente pagamento recusado. O QR pode ter sido criado corretamente e a divergência aparecer apenas na consulta. O backend registra uma linha com ID local e nomes controlados dos campos, sem dados pessoais, credenciais ou corpo completo da resposta:
+
+```text
+ZETTPAY_TRANSACTION_MISMATCH pagamento=<id local> campos=id_divergente
+```
+
+Os códigos possíveis são `id_invalido`, `id_divergente`, `referencia_divergente`, `valor_divergente`, `moeda_divergente`, `status_invalido` e `id_webhook_divergente`. A resposta HTTP apresenta uma mensagem compreensível e o código/campos para diagnóstico. Não remova a conferência de valor ou referência para contornar o erro; compare a criação e a consulta antes de adaptar qualquer mapeamento de identificadores. Um pagamento já efetuado não deve ser repetido para resolver falha de conciliação.
+
 Não inclui estorno, chargeback, assinatura, saque, comunicação de pagamento por WhatsApp, atualização de regras de premiação ou restauração de conta pelo telefone. A conferência de sorteio existente continua uma observação administrativa e não passa a autorizar prêmios apenas porque um Pix foi pago.
