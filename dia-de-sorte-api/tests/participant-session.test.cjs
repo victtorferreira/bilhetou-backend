@@ -99,7 +99,7 @@ test('PostgreSQL: registration, scoped stock, concurrent confirmation replay and
   process.env.PUBLIC_ORGANIZATION_ID = org.id; delete process.env.PUBLIC_CAMPAIGN_ID;
   let campaign;
   try {
-    campaign = await prisma.campaign.create({ data: { ticketPriceCents: 250, organizationId: org.id, name: 'Participant TEST', rulesVersion: 'v1', status: 'OPEN' } });
+    campaign = await prisma.campaign.create({ data: { ticketPriceCents: 0, organizationId: org.id, name: 'Participant TEST', rulesVersion: 'v1', status: 'OPEN' } });
     await prisma.$transaction(async tx => {
       const t = await tx.ticket.create({ data: { campaignId: campaign.id, serial: 'TEST1' } });
       await tx.ticketNumber.createMany({ data: ['0038','1123','6789','9876'].map((value, i) => ({ ticketId: t.id, campaignId: campaign.id, value, position: i + 1 })) });

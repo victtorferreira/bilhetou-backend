@@ -5,6 +5,8 @@ export class DrawsController {
   constructor(private readonly prisma: PrismaService) {}
   @Get(':campaignId')
   list(@Param('campaignId', ParseUUIDPipe) campaignId: string) {
-    return this.prisma.draw.findMany({ where: { campaignId }, include: { results: { orderBy: { position: 'asc' } }, _count: { select: { matches: true } } }, orderBy: { createdAt: 'desc' } });
+    const organizationId = process.env.PUBLIC_ORGANIZATION_ID || process.env.ADMIN_ORGANIZATION_ID;
+    if (!organizationId) return [];
+    return this.prisma.draw.findMany({ where: { campaignId, status: { in: ['RECORDED', 'REVIEWED'] }, campaign: { organizationId, legacySample: false, deletedAt: null, status: { in: ['CLOSED', 'ARCHIVED'] } } }, select: { id: true, campaignId: true, reference: true, createdAt: true, results: { select: { number: true, position: true }, orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
   }
 }

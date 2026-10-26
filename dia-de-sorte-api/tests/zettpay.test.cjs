@@ -17,15 +17,18 @@ async function configured(run) {
 }
 const payer = { payerEmail: 'test@example.com', payerDocument: '11144477735' };
 function fixture() {
-  const order = { id: randomUUID(), participantId: randomUUID(), totalCents: 200, quantity: 1, paymentRequired: true, paymentStatus: 'UNPAID' };
+  const order = { id: randomUUID(), campaignId: randomUUID(), participantId: randomUUID(), totalCents: 200, quantity: 1, paymentRequired: true, paymentStatus: 'UNPAID', reservationExpiresAt: new Date(Date.now() + 900000) };
   const payments = new Map(); const events = new Map();
   let posts = 0; let lookups = 0; let status = 'pending'; let missing = false;
   const transaction = payment => ({ id: 33, status, amount: '2.00', external_id: payment.id, currency: 'BRL', qr_code: '000201-test-pix' });
   const db = {
     order: {
       findFirst: async ({ where }) => where.id === order.id && where.participantId === order.participantId ? { ...order } : null,
+      findUniqueOrThrow: async () => ({ ...order }),
+      updateMany: async ({ where, data }) => { if (order.paymentStatus === where.paymentStatus && order.reservationExpiresAt <= where.reservationExpiresAt.lte) { Object.assign(order, data); return { count: 1 }; } return { count: 0 }; },
       update: async ({ data }) => Object.assign(order, data),
     },
+    ticket: { updateMany: async () => ({ count: 0 }) },
     zettpayPayment: {
       create: async ({ data }) => {
         if (payments.size) throw Object.assign(new Error('duplicate'), { code: 'P2002' });
@@ -63,7 +66,7 @@ test('cash-in paid status must be explicitly configured and cannot be processing
   process.env.ZETTPAY_ENABLED = 'false'; assert.throws(zettpayConfiguration, /desativado/);
 }));
 
-test('participant session hides payment-required tickets until PAID and preserves legacy orders', async () => {
+test('participant session hides all priced unpaid tickets even when the gateway was disabled', async () => {
   const { ParticipantService } = require('../dist/participants/participant.service');
   const organizationId = randomUUID(); const campaignId = randomUUID(); const participantId = randomUUID();
   const previous = process.env.PUBLIC_ORGANIZATION_ID;
@@ -82,8 +85,8 @@ test('participant session hides payment-required tickets until PAID and preserve
   try {
     const service = new ParticipantService({ $transaction: async cb => cb(tx) });
     const state = await service.current('a'.repeat(64));
-    assert.deepEqual(state.orders.map(order => order.tickets.length), [0, 1, 1]);
-    assert.deepEqual(state.orders.map(order => order.ticketIds.length), [0, 1, 1]);
+    assert.deepEqual(state.orders.map(order => order.tickets.length), [0, 1, 0]);
+    assert.deepEqual(state.orders.map(order => order.ticketIds.length), [0, 1, 0]);
   } finally { if (previous === undefined) delete process.env.PUBLIC_ORGANIZATION_ID; else process.env.PUBLIC_ORGANIZATION_ID = previous; }
 });
 
@@ -331,6 +334,20 @@ test('HTTP checkout requires the owner session, rejects extra price fields and s
   } finally { await app.close(); }
 }));
 
+test('expired reservation hides QR and prevents a new charge; late confirmed payment requires review', async () => configured(async () => {
+  const f = fixture(); await f.service.create('my-session', f.order.id, payer);
+  f.order.reservationExpiresAt = new Date(0);
+  const current = await f.service.current('my-session', f.order.id);
+  assert.equal(current.order.reservationExpired, true); assert.equal(current.payment.qrCode, null);
+  await assert.rejects(f.service.create('my-session', f.order.id, payer), /reserva expirou/);
+  f.setStatus('approved');
+  const late = await f.service.check('my-session', f.order.id);
+  assert.equal(late.payment.status, 'PAID'); assert.equal(late.order.paymentStatus, 'REVIEW_REQUIRED');
+  const payment = [...f.payments.values()][0];
+  await f.service.apply(payment, { id: 33, external_id: payment.id, amount: '2.00', status: 'pending' });
+  assert.equal(f.order.paymentStatus, 'REVIEW_REQUIRED'); assert.equal(f.posts(), 1);
+}));
+
 test('PostgreSQL: pending order hides tickets, concurrent checkout charges once and source confirmation releases them', { skip: !process.env.TEST_DATABASE_URL }, async () => configured(async () => {
   const { PrismaClient } = require('../dist/generated/prisma/client');
   const { PrismaPg } = require('@prisma/adapter-pg');
@@ -342,7 +359,10 @@ test('PostgreSQL: pending order hides tickets, concurrent checkout charges once 
   process.env.PUBLIC_ORGANIZATION_ID = org.id; delete process.env.PUBLIC_CAMPAIGN_ID;
   try {
     const campaign = await prisma.campaign.create({ data: { organizationId: org.id, name: 'ZETTPAY TEST', status: 'OPEN', ticketPriceCents: 200 } });
-    await prisma.ticket.create({ data: { campaignId: campaign.id, serial: 'PIX-TEST', numbers: { create: ['0001','0002','0003','0004'].map((value, position) => ({ campaignId: campaign.id, value, position })) } } });
+    await prisma.$transaction(async tx => {
+      const ticket = await tx.ticket.create({ data: { campaignId: campaign.id, serial: 'PIX-TEST' } });
+      await tx.ticketNumber.createMany({ data: ['0001','0002','0003','0004'].map((value, i) => ({ ticketId: ticket.id, campaignId: campaign.id, value, position: i + 1 })) });
+    });
     const participants = new ParticipantService(prisma);
     const registered = await participants.register('Maria Silva', '98999999999');
     const selection = await participants.select(registered.token, { quantity: 1 });

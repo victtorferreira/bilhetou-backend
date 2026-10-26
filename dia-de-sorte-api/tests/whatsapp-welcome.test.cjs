@@ -9,11 +9,12 @@ function worker(row = {}) {
   const updates = [];
   let claimed = false;
   const prisma = {
+    participant: { findUnique: async () => ({ organizationId: 'ORG', phone: '98999999999', phoneVerifiedAt: new Date() }) },
     whatsappWelcome: { updateMany: async () => ({ count: 0 }), update: async value => { updates.push(value.data); } },
     $queryRaw: async () => {
       if (claimed) return [];
       claimed = true;
-      return [{ id: 'welcome', attempts: 1, phone: '98999999999', name: 'Maria Silva', ...row }];
+      return [{ id: 'welcome', participantId: 'PERSON', organizationId: 'ORG', attempts: 1, phone: '98999999999', name: 'Maria Silva', ...row }];
     },
   };
   const service = new WhatsappWelcomeService(prisma);
@@ -26,6 +27,13 @@ async function withFetch(mock, run) {
   global.fetch = mock;
   try { await run(); } finally { global.fetch = original; }
 }
+
+test('worker cancels old queued messages for an unverified recipient without contacting the provider', async () => {
+  const { service, updates, prisma } = worker();
+  prisma.participant.findUnique = async () => ({ organizationId: 'ORG', phone: '98999999999', phoneVerifiedAt: null });
+  await withFetch(async () => assert.fail('unverified recipient must never cause an outbound request'), () => service.processNext());
+  assert.equal(updates.at(-1).status, 'CANCELLED');
+});
 
 test('worker authenticates, resolves Brazilian number and sends once using canonical LID', async () => {
   const { service, updates } = worker();
@@ -248,7 +256,7 @@ test('consent is an optional strict boolean, never a truthy string', async () =>
   }
 });
 
-test('registration enqueues only with explicit consent in its transaction and preserves identity boundaries', async () => {
+test('registration never enqueues outbound messages for an unverified phone, even with a checkbox', async () => {
   const previous = process.env.PUBLIC_ORGANIZATION_ID;
   process.env.PUBLIC_ORGANIZATION_ID = 'ORG';
   try {
@@ -265,12 +273,7 @@ test('registration enqueues only with explicit consent in its transaction and pr
       service.snapshot = async () => ({ participant: { id: 'NEW-PARTICIPANT', verification: 'unverified' } });
       const result = await service.register('Maria Silva', '98999999999', undefined, consent);
       assert.equal(result.state.participant.verification, 'unverified');
-      assert.equal(queued.length, consent === true ? 1 : 0);
-      if (consent) {
-        assert.equal(queued[0].skipDuplicates, true);
-        assert.equal(queued[0].data[0].participantId, 'NEW-PARTICIPANT');
-        assert.equal(queued[0].data[0].consentVersion, 'welcome-v1');
-      }
+      assert.equal(queued.length, 0);
     }
   } finally {
     if (previous === undefined) delete process.env.PUBLIC_ORGANIZATION_ID; else process.env.PUBLIC_ORGANIZATION_ID = previous;
@@ -291,6 +294,10 @@ test('PostgreSQL: repeated registration queues once and concurrent workers claim
     const a = await registrations.register('Maria Silva', '98999999999', undefined, true);
     const b = await registrations.register('Maria Silva', '98999999999', undefined, true);
     assert.notEqual(a.state.participant.id, b.state.participant.id);
+    assert.equal(await prisma.whatsappWelcome.count({ where: { organizationId: org.id } }), 0);
+    // Only a server-verified identity can enter the delivery queue.
+    await prisma.participant.update({ where: { id: a.state.participant.id }, data: { phoneVerifiedAt: new Date() } });
+    await prisma.whatsappWelcome.create({ data: { organizationId: org.id, participantId: a.state.participant.id, phone: '98999999999', name: 'Maria Silva' } });
     assert.equal(await prisma.whatsappWelcome.count({ where: { organizationId: org.id } }), 1);
     let posts = 0;
     const workers = [new WhatsappWelcomeService(prisma), new WhatsappWelcomeService(prisma)];

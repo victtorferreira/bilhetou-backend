@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 import type { ParticipantSelectionDto } from './participant.dto';
 import { zettpayConfiguration } from '../payments/zettpay.client';
+import { expireReservations, maxReservationTickets, reservationLifetime } from '../payments/reservations';
 
 const lifetime = 24 * 60 * 60 * 1000;
 const empty = () => ({ participant: null, campaign: null, availableCount: 0, selectedIds: [] as string[], selectedTickets: [], selectionKey: '', orders: [] });
@@ -61,8 +62,8 @@ export class ParticipantService {
       campaign: campaign ? { id: campaign.id, name: campaign.name, ticketPriceCents: campaign.ticketPriceCents, prizeCents: campaign.prizeCents, drawDate: campaign.closesAt?.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) ?? 'Data a definir', status: campaign.status } : null,
       availableCount, selectedIds: selected.map(t => t.id), selectedTickets: selected.map(t => this.ticket(t, campaign?.name, campaign?.closesAt)), selectionKey: session.selectionKey,
       orders: orders.map(order => {
-        const visible = !order.paymentRequired || order.paymentStatus === 'PAID' ? order.tickets : [];
-        return { id: order.id, participantId: order.participantId, campaignId: order.campaignId, ticketIds: visible.map(t => t.id), totalCents: order.totalCents, quantity: order.quantity, createdAt: order.createdAt.toISOString(), idempotencyKey: order.idempotencyKey, status: 'registered', paymentRequired: order.paymentRequired ?? false, paymentStatus: order.paymentStatus || 'UNPAID', tickets: visible.map(t => this.ticket(t, order.campaign.name, order.campaign.closesAt)) };
+        const visible = order.paymentStatus === 'PAID' || (!order.paymentRequired && order.totalCents === 0) ? order.tickets : [];
+        return { id: order.id, participantId: order.participantId, campaignId: order.campaignId, ticketIds: visible.map(t => t.id), totalCents: order.totalCents, quantity: order.quantity, createdAt: order.createdAt.toISOString(), reservationExpiresAt: order.reservationExpiresAt?.toISOString() ?? null, idempotencyKey: order.idempotencyKey, status: 'registered', paymentRequired: order.paymentRequired || order.totalCents > 0, paymentStatus: order.paymentStatus || 'UNPAID', tickets: visible.map(t => this.ticket(t, order.campaign.name, order.campaign.closesAt)) };
       }),
     };
   }
@@ -91,12 +92,8 @@ export class ParticipantService {
         await tx.participantSession.deleteMany({ where: { tokenHash: this.hash(previousToken) } });
       }
       participant ??= await tx.participant.create({ data: { organizationId, ...input } });
-      if (whatsappConsent === true) {
-        await tx.whatsappWelcome.createMany({
-          data: [{ participantId: participant.id, organizationId, ...input, consentVersion: 'welcome-v1' }],
-          skipDuplicates: true,
-        });
-      }
+      // A checkbox is not proof of phone ownership. Registration never schedules
+      // outbound messages. Keep the optional argument for older clients only.
       const session = await tx.participantSession.create({ data: { tokenHash: this.hash(token), participantId: participant.id, campaignId: campaign.id, selectedIds: [], expiresAt: new Date(Date.now() + lifetime) }, include: { participant: true } });
       return this.snapshot(session, tx);
     });
@@ -116,6 +113,7 @@ export class ParticipantService {
     await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${session.campaignId}::uuid FOR UPDATE`;
     const campaign = await tx.campaign.findFirst({ where: { ...this.openCampaignWhere(session.participant.organizationId), id: session.campaignId } });
     if (!campaign) throw new ConflictException('A campanha não está aberta.');
+    await expireReservations(tx, campaign.id);
     return campaign;
   }
   async select(token: string | undefined, input: ParticipantSelectionDto) {
@@ -152,16 +150,21 @@ export class ParticipantService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
   async confirm(token: string | undefined, key: string) {
-    if (process.env.ZETTPAY_ENABLED === 'true') zettpayConfiguration();
     return this.prisma.$transaction(async tx => {
       const session = await this.lockedSession(token, tx);
       const previous = await tx.order.findUnique({ where: { participantId_idempotencyKey: { participantId: session.participantId, idempotencyKey: key } } });
       if (previous) return this.snapshot(session, tx);
       if (key !== session.selectionKey || !session.selectedIds.length) throw new ConflictException('A seleção mudou. Confira seus bilhetes antes de confirmar.');
       const campaign = await this.campaign(session, tx);
+      const paymentRequired = campaign.ticketPriceCents > 0;
+      if (paymentRequired) zettpayConfiguration();
+      if (session.selectedIds.length > maxReservationTickets) throw new BadRequestException('Selecione até 100 bilhetes por pedido.');
+      const pending = await tx.order.findFirst({ where: { campaignId: campaign.id, paymentRequired: true, paymentStatus: 'UNPAID', reservationExpiresAt: { gt: new Date() }, participant: { organizationId: session.participant.organizationId, phone: session.participant.phone } }, select: { id: true } });
+      if (pending) throw new ConflictException('Conclua seu pedido pendente ou aguarde a reserva expirar antes de criar outro.');
       const selected = await tx.ticket.findMany({ where: { id: { in: session.selectedIds }, campaignId: campaign.id, status: 'AVAILABLE' }, select: { id: true } });
       if (selected.length !== session.selectedIds.length) throw new ConflictException('Algum bilhete já foi atribuído. Escolha seus bilhetes novamente.');
-      const order = await tx.order.create({ data: { campaignId: campaign.id, participantId: session.participantId, idempotencyKey: key, quantity: selected.length, totalCents: selected.length * campaign.ticketPriceCents, paymentRequired: process.env.ZETTPAY_ENABLED === 'true' } });
+      const reservationExpiresAt = paymentRequired ? new Date(Math.min(Date.now() + reservationLifetime, campaign.closesAt?.getTime() ?? Infinity)) : null;
+      const order = await tx.order.create({ data: { campaignId: campaign.id, participantId: session.participantId, idempotencyKey: key, quantity: selected.length, totalCents: selected.length * campaign.ticketPriceCents, paymentRequired, reservationExpiresAt, paymentStatus: paymentRequired ? 'UNPAID' : 'PAID' } });
       const result = await tx.ticket.updateMany({ where: { id: { in: selected.map(t => t.id) }, campaignId: campaign.id, status: 'AVAILABLE' }, data: { status: 'ASSIGNED', orderId: order.id, assignedAt: new Date() } });
       if (result.count !== selected.length) throw new ConflictException('O estoque mudou. Escolha seus bilhetes novamente.');
       const updated = await tx.participantSession.update({ where: { id: session.id }, data: { selectedIds: [], selectionKey: randomUUID() }, include: { participant: true } });
@@ -171,6 +174,6 @@ export class ParticipantService {
   async results(token?: string) {
     const session = await this.session(token);
     if (!session.campaignId) return [];
-    return this.prisma.draw.findMany({ where: { campaignId: session.campaignId, campaign: { organizationId: session.participant.organizationId, legacySample: false } }, select: { id: true, reference: true, createdAt: true, results: { select: { number: true, position: true }, orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
+    return this.prisma.draw.findMany({ where: { campaignId: session.campaignId, status: { in: ['RECORDED', 'REVIEWED'] }, campaign: { organizationId: session.participant.organizationId, legacySample: false, deletedAt: null, status: { in: ['CLOSED', 'ARCHIVED'] } } }, select: { id: true, reference: true, createdAt: true, results: { select: { number: true, position: true }, orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'desc' }, take: 100 });
   }
 }

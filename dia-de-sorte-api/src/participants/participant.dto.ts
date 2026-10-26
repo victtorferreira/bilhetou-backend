@@ -8,9 +8,9 @@ export class RegisterParticipantDto {
 }
 export class ParticipantSelectionDto {
   @ValidateIf(o => o.ticketIds !== undefined || o.quantity === undefined)
-  @IsArray() @ArrayMaxSize(1000) @ArrayUnique() @IsUUID('all', { each: true }) ticketIds?: string[];
+  @IsArray() @ArrayMaxSize(100) @ArrayUnique() @IsUUID('all', { each: true }) ticketIds?: string[];
   @ValidateIf(o => o.quantity !== undefined || o.ticketIds === undefined)
-  @IsInt() @Min(1) @Max(1000) quantity?: number;
+  @IsInt() @Min(1) @Max(100) quantity?: number;
 }
 export class ParticipantCampaignDto { @IsUUID() campaignId!: string; }
 export class ParticipantOrderDto { @IsUUID() idempotencyKey!: string; }

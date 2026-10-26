@@ -16,5 +16,8 @@ import { CampaignsController } from './campaigns/campaigns.controller';
 import { TicketsController } from './tickets/tickets.controller';
 import { DrawsController } from './draws/draws.controller';
 import { TicketCreationService } from './tickets/ticket-creation.service';
-@Module({ imports: [PrismaModule], controllers: [ZettpayCheckoutController, ZettpayWebhookController, HealthController, AdminParticipantsController, ParticipantController, AdminSessionController, AdminTicketsController, CampaignsController, TicketsController, DrawsController], providers: [ZettpayService, ZettpayClient, WhatsappWelcomeService, AdminParticipantsService, ParticipantService, ParticipantOriginGuard, AdminSessionStore, AdminAuth, AdminTicketService, TicketCreationService] })
+import { APP_GUARD } from '@nestjs/core';
+import { RequestLimits } from './security/request-limits';
+import { ReservationCleanup } from './payments/reservations';
+@Module({ imports: [PrismaModule], controllers: [ZettpayCheckoutController, ZettpayWebhookController, HealthController, AdminParticipantsController, ParticipantController, AdminSessionController, AdminTicketsController, CampaignsController, TicketsController, DrawsController], providers: [{ provide: APP_GUARD, useClass: RequestLimits }, ReservationCleanup, ZettpayService, ZettpayClient, WhatsappWelcomeService, AdminParticipantsService, ParticipantService, ParticipantOriginGuard, AdminSessionStore, AdminAuth, AdminTicketService, TicketCreationService] })
 export class AppModule {}

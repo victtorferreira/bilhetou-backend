@@ -1,5 +1,9 @@
 # Publicação do Bilhetou
 
+## Correções de segurança de 26/10/2026
+
+Para esta versão, siga primeiro [o procedimento de publicação das correções](../../security-review/CORRECOES.md). Há uma migração nova obrigatória, reservas com prazo, bloqueio de pedidos pagos sem checkout e suspensão de mensagens para telefones não verificados. As seções históricas abaixo descrevem versões anteriores e não substituem esse procedimento.
+
 ## Atualização de 22/10/2026
 
 Os textos e fluxos demonstrativos foram retirados. Cadastro, seleção, pedidos, bilhetes, resultados e administração usam as entidades Participant, Order e o estado ASSIGNED. Um pedido registrado não é marcado como pago; o pagamento continua sem integração automática. O telefone permanece sem verificação de identidade.

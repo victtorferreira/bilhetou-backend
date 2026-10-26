@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ParticipantService } from '../participants/participant.service';
 import type { ZettpayPayment } from '../generated/prisma/client';
 import { reaisToCents, validPayerDocument, verifyZettpaySignature, zettpayConfiguration, ZettpayClient, zettpayId } from './zettpay.client';
+import { expireReservations } from './reservations';
 
 @Injectable()
 export class ZettpayService {
@@ -34,11 +35,16 @@ export class ZettpayService {
   async current(token: string | undefined, orderId: string) {
     const { order } = await this.ownedOrder(token, orderId);
     const payment = await this.prisma.zettpayPayment.findUnique({ where: { orderId } });
-    return { order: { id: order.id, totalCents: order.totalCents, quantity: order.quantity, paymentRequired: order.paymentRequired, paymentStatus: order.paymentStatus }, payment: this.view(payment) };
+    const expired = order.paymentStatus !== 'PAID' && (!order.reservationExpiresAt || order.reservationExpiresAt <= new Date());
+    const view = this.view(payment);
+    if (view && (expired || order.paymentStatus === 'REVIEW_REQUIRED')) view.qrCode = null;
+    return { order: { id: order.id, totalCents: order.totalCents, quantity: order.quantity, paymentRequired: order.paymentRequired, paymentStatus: order.paymentStatus, reservationExpiresAt: order.reservationExpiresAt, reservationExpired: expired }, payment: view };
   }
   async create(token: string | undefined, orderId: string, input: { payerEmail: string; payerDocument: string }) {
     zettpayConfiguration();
     const { order, identity } = await this.ownedOrder(token, orderId);
+    if (order.paymentStatus === 'PAID') return this.current(token, orderId);
+    if (order.paymentStatus !== 'UNPAID' || !order.reservationExpiresAt || order.reservationExpiresAt <= new Date()) throw new ConflictException('A reserva expirou. Escolha seus bilhetes novamente. Se já pagou, consulte este pagamento ou contate o suporte.');
     if (!order.paymentRequired) throw new ConflictException('Este pedido foi registrado antes da ativação do checkout Pix.');
     if (!Number.isSafeInteger(order.totalCents) || order.totalCents < 100) throw new BadRequestException('O valor mínimo do Pix é R$ 1,00.');
     if (!validPayerDocument(input.payerDocument)) throw new BadRequestException('Informe um CPF ou CNPJ válido do pagador.');
@@ -80,6 +86,11 @@ export class ZettpayService {
     const qrCode = typeof data.qr_code === 'string' && data.qr_code.startsWith('000201') && data.qr_code.length <= 10000 ? data.qr_code : null;
     // One transaction commits both the provider result and the order's payment state.
     await this.prisma.$transaction(async tx => {
+      const order = await tx.order.findUniqueOrThrow({ where: { id: payment.orderId } });
+      // One lock order everywhere: campaign, then payment. Serializes expiry,
+      // reassignment and late-payment reconciliation without overselling.
+      await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${order.campaignId}::uuid FOR UPDATE`;
+      await expireReservations(tx, order.campaignId);
       await tx.$queryRaw`SELECT id FROM "ZettpayPayment" WHERE id = ${payment.id}::uuid FOR UPDATE`;
       const current = await tx.zettpayPayment.findUniqueOrThrow({ where: { id: payment.id } });
       // Recheck under the lock: concurrent first lookups cannot bind different IDs.
@@ -94,7 +105,14 @@ export class ZettpayService {
         ...(paid && !current.paidAt ? { paidAt: new Date() } : {}),
         lastError: !paid && !alreadyPaid && (data.status !== 'pending' || (!qrCode && !current.qrCode)) ? 'Cobrança em conferência. Consulte o pagamento novamente.' : null,
       } });
-      if (paid || alreadyPaid) await tx.order.update({ where: { id: payment.orderId }, data: { paymentStatus: 'PAID' } });
+      if (paid || alreadyPaid) {
+        const fresh = await tx.order.findUniqueOrThrow({ where: { id: payment.orderId } });
+        const fulfillable = fresh.paymentStatus === 'PAID' || (fresh.paymentStatus === 'UNPAID' && !!fresh.reservationExpiresAt && fresh.reservationExpiresAt > new Date());
+        if (!fulfillable) await tx.ticket.updateMany({ where: { orderId: payment.orderId, status: 'ASSIGNED' }, data: { status: 'AVAILABLE', orderId: null, assignedAt: null } });
+        // A paid Pix after expiry must be refunded/reconciled by support. Never
+        // grant tickets already returned to stock or overwrite an earlier review.
+        await tx.order.update({ where: { id: payment.orderId }, data: { paymentStatus: fulfillable ? 'PAID' : 'REVIEW_REQUIRED' } });
+      }
     });
   }
 

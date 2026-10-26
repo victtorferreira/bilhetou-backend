@@ -136,6 +136,7 @@ model Order {
   totalCents    Int
   paymentRequired Boolean @default(false)
   paymentStatus String @default("UNPAID") @db.VarChar(24)
+  reservationExpiresAt DateTime?
   zettpayPayment ZettpayPayment?
   createdAt     DateTime @default(now())
   tickets       Ticket[]
@@ -143,6 +144,14 @@ model Order {
   participant Participant? @relation(fields: [participantId], references: [id])
   idempotencyKey String? @db.Uuid
   @@unique([participantId, idempotencyKey])
+  @@index([paymentStatus, reservationExpiresAt, campaignId])
+}
+
+model RequestLimit {
+  key String @id @db.Char(64)
+  count Int
+  expiresAt DateTime
+  @@index([expiresAt])
 }
 
 model ZettpayPayment {
@@ -169,11 +178,13 @@ model Participant {
   organization Organization @relation(fields: [organizationId], references: [id])
   name String @db.VarChar(120)
   phone String @db.VarChar(11)
+  phoneVerifiedAt DateTime?
   createdAt DateTime @default(now())
   sessions ParticipantSession[]
   orders Order[]
   welcomeMessages WhatsappWelcome[]
   @@index([organizationId])
+  @@index([organizationId, phone])
 }
 
 // One welcome per organization/phone, without using the phone as authentication.

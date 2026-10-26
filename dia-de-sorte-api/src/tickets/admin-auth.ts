@@ -16,17 +16,21 @@ export class AdminAuth implements CanActivate {
   login(secret: string, remoteAddress: string) {
     const now = Date.now();
     for (const [key, value] of this.store.attempts) if (value.expires <= now) this.store.attempts.delete(key);
-    const attempts = this.store.attempts.get(remoteAddress) ?? { count: 0, expires: now + 15 * 60_000 };
-    if (++attempts.count > 10 || this.store.attempts.size > 10000) throw new UnauthorizedException('Muitas tentativas. Aguarde 15 minutos.');
-    this.store.attempts.set(remoteAddress, attempts);
     const expected = process.env.ADMIN_ACCESS_KEY;
     const organizationId = process.env.ADMIN_ORGANIZATION_ID;
     const hash = (s: string) => createHash('sha256').update(s).digest();
-    if (!expected || expected.length < 32 || !organizationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId) || !timingSafeEqual(hash(secret), hash(expected))) throw new UnauthorizedException('Credencial inválida ou administração não configurada.');
+    const valid = !!expected && expected.length >= 32 && !!organizationId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId) && timingSafeEqual(hash(secret), hash(expected));
+    if (!valid) {
+      const attempts = this.store.attempts.get(remoteAddress) ?? { count: 0, expires: now + 15 * 60_000 };
+      attempts.count = Math.min(attempts.count + 1, 11);
+      if (this.store.attempts.size < 10000 || this.store.attempts.has(remoteAddress)) this.store.attempts.set(remoteAddress, attempts);
+      if (attempts.count > 10) throw new UnauthorizedException('Muitas tentativas. Aguarde 15 minutos.');
+      throw new UnauthorizedException('Credencial inválida ou administração não configurada.');
+    }
     for (const [key, value] of this.store.sessions) if (value.expires <= now) this.store.sessions.delete(key);
-    if (this.store.sessions.size >= 1000) throw new UnauthorizedException('Limite de sessões. Aguarde a expiração.');
+    if (this.store.sessions.size >= 1000) this.store.sessions.delete(this.store.sessions.keys().next().value!);
     const token = randomBytes(32).toString('hex');
-    this.store.sessions.set(token, { organizationId, actor: process.env.ADMIN_ACTOR || 'configured-admin', expires: now + 8 * 3600_000 });
+    this.store.sessions.set(token, { organizationId: organizationId!, actor: process.env.ADMIN_ACTOR || 'configured-admin', expires: now + 8 * 3600_000 });
     this.store.attempts.delete(remoteAddress);
     return token;
   }

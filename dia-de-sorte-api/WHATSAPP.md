@@ -2,7 +2,7 @@
 
 Para usar Evolution API no Railway, siga [EVOLUTION-RAILWAY.md](EVOLUTION-RAILWAY.md). Selecione `WHATSAPP_PROVIDER=evolution` e ative com `WHATSAPP_ENABLED=true`. O modo WAHA abaixo continua disponível como padrão (`WHATSAPP_PROVIDER=waha`), controlado por `WAHA_ENABLED`. A mesma fila atende ambos; a troca não reabre mensagens já finalizadas. Não há fallback automático após envio de resultado incerto.
 
-O formulário permite solicitar uma confirmação por WhatsApp (opcional, desmarcado inicialmente). O cadastro e a mensagem pendente são gravados na mesma transação PostgreSQL. A autorização registrada corresponde ao texto `welcome-v1`: “Quero receber a confirmação do meu cadastro pelo WhatsApp do Bilhetou.” Não autoriza campanhas promocionais.
+Desde a correção de segurança de 26/10/2026, o cadastro não agenda mensagens e o checkbox foi removido. O telefone informado não comprova titularidade. A migração cancela mensagens pendentes/processando antigas e o worker recusa destinatários sem `phoneVerifiedAt` ou com telefone/organização divergentes do participante. Não existe ainda um fluxo de verificação de telefone no produto: manter a integração ativa não reativa o envio automático. Um futuro fluxo deverá comprovar posse e registrar consentimento antes de criar a mensagem. Não preencha `phoneVerifiedAt` somente com base no cadastro ou no resultado de “número existe” do provedor.
 
 ## Ativar
 

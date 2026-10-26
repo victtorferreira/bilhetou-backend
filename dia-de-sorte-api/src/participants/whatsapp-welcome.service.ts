@@ -92,6 +92,11 @@ export class WhatsappWelcomeService implements OnModuleInit, OnModuleDestroy {
       ) RETURNING *`;
     if (!rows.length) return;
     const message = rows[0];
+    const recipient = await this.prisma.participant.findUnique({ where: { id: message.participantId }, select: { organizationId: true, phone: true, phoneVerifiedAt: true } });
+    if (!recipient?.phoneVerifiedAt || recipient.organizationId !== message.organizationId || recipient.phone !== message.phone) {
+      await this.finish(message, 'CANCELLED', 'Envio suspenso: telefone sem verificação de titularidade.');
+      return;
+    }
     let chatId: string;
     let stage = 'SESSION';
     const evolution = this.config.provider === 'evolution';
