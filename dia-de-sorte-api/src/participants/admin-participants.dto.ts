@@ -10,4 +10,5 @@ export class AdminParticipantQueryDto extends AdminParticipantPageDto {
   @IsOptional() @IsString() @MaxLength(120) query = '';
   @IsOptional() @IsIn(['all', 'with_orders', 'without_orders']) activity = 'all';
   @IsOptional() @IsUUID() campaignId?: string;
+  @IsOptional() @IsIn(['current', 'all']) campaignScope = 'current';
 }

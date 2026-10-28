@@ -24,8 +24,24 @@ export class AdminParticipantsService {
   }
   async list(organizationId: string, input: AdminParticipantQueryDto) {
     return this.prisma.$transaction(async tx => {
-      if (input.campaignId && !await tx.campaign.findFirst({ where: { id: input.campaignId, organizationId, legacySample: false }, select: { id: true } })) throw new NotFoundException('Campanha não encontrada.');
-      const scope = this.orderScope(organizationId, input.campaignId);
+      const mode = input.campaignId ? 'campaign' : input.campaignScope === 'all' ? 'all' : 'current';
+      const campaignWhere = { organizationId, legacySample: false };
+      const select = { id: true, name: true, status: true, closesAt: true } as const;
+      const now = new Date();
+      let campaign = mode === 'campaign'
+        ? await tx.campaign.findFirst({ where: { ...campaignWhere, id: input.campaignId }, select })
+        : mode === 'current'
+          ? await tx.campaign.findFirst({ where: { ...campaignWhere, deletedAt: null, status: 'OPEN', OR: [{ closesAt: null }, { closesAt: { gt: now } }] }, select, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] })
+          : null;
+      if (mode === 'campaign' && !campaign) throw new NotFoundException('Campanha não encontrada.');
+      const active = !!campaign && campaign.status === 'OPEN' && (!campaign.closesAt || campaign.closesAt > now);
+      if (mode === 'current' && !campaign) {
+        campaign = await tx.campaign.findFirst({ where: { ...campaignWhere, deletedAt: null, status: { not: 'DRAFT' } }, select, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] });
+      }
+      // Without any campaign, keep the registrations visible with zero activity.
+      const scope: Prisma.OrderWhereInput = mode !== 'all' && !campaign
+        ? { ...this.orderScope(organizationId), id: { in: [] } }
+        : this.orderScope(organizationId, campaign?.id);
       const query = input.query.trim().replace(/\s+/g, ' ');
       let digits = query.replace(/\D/g, '');
       if (digits.length === 13 && digits.startsWith('55')) digits = digits.slice(2);
@@ -34,7 +50,7 @@ export class AdminParticipantsService {
       if (input.activity === 'without_orders') {
         // With a campaign selected, include people without orders in that campaign.
         filters.push({ orders: { none: scope } });
-      } else if (input.campaignId || input.activity === 'with_orders') filters.push({ orders: { some: scope } });
+      } else if (input.activity === 'with_orders') filters.push({ orders: { some: scope } });
       const where: Prisma.ParticipantWhereInput = { organizationId, AND: filters };
       const total = await tx.participant.count({ where });
       const { skip, ...paging } = pagination(total, input.page);
@@ -45,6 +61,7 @@ export class AdminParticipantsService {
       const totals = await tx.order.aggregate({ where: { ...scope, participant: where }, _count: { _all: true }, _sum: { quantity: true } });
       return {
         ...paging,
+        campaignScope: { mode, active, campaign: campaign ? { id: campaign.id, name: campaign.name } : null },
         summary: { participants: total, orders: totals._count._all, tickets: totals._sum.quantity ?? 0 },
         items: participants.map(({ phone, ...p }) => ({ ...p, phoneMasked: maskedPhone(phone), orders: byParticipant.get(p.id)?._count._all ?? 0, tickets: byParticipant.get(p.id)?._sum.quantity ?? 0 })),
       };
