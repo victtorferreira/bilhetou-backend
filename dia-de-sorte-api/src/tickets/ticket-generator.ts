@@ -7,7 +7,7 @@ export interface StockEntry { serial: string; numbers: { value: string }[] }
 
 export function generateTickets(input: GenerationInput, stock: StockEntry[], choose = randomInt): GeneratedTicket[] {
   const prefix = input.prefix.trim().toUpperCase();
-  if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 1000) throw new BadRequestException('Quantidade deve ser um inteiro entre 1 e 1.000.');
+  if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 2500) throw new BadRequestException('Quantidade deve ser um inteiro entre 1 e 2.500.');
   if (!/^[A-Z][A-Z0-9-]{0,11}$/.test(prefix)) throw new BadRequestException('Prefixo inválido. Use até 12 letras, números ou hífens, começando com uma letra.');
   if (stock.length + input.quantity > 2500) throw new ConflictException('O estoque aceita até 2.500 bilhetes por campanha.');
   const occupied = new Set(stock.flatMap(ticket => ticket.numbers.map(number => number.value)));

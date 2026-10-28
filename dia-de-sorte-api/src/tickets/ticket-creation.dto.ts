@@ -3,7 +3,7 @@ import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength
 
 export class PreviewTicketsDto {
   @IsUUID() campaignId!: string;
-  @IsInt() @Min(1) @Max(1000) quantity!: number;
+  @IsInt() @Min(1) @Max(2500, { message: 'Quantidade deve ser de no máximo 2.500 bilhetes por lote.' }) quantity!: number;
   @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim().toUpperCase() : value)
   @IsString() @Matches(/^[A-Z][A-Z0-9-]{0,11}$/) prefix!: string;
   @IsBoolean() uniqueNumbers!: boolean;

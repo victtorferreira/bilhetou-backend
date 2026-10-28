@@ -52,7 +52,7 @@ export class TicketCreationService {
     let payload: PreviewPayload;
     try { payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as PreviewPayload; }
     catch { throw new BadRequestException('Prévia inválida.'); }
-    if (payload.version !== 1 || !Array.isArray(payload.tickets) || payload.tickets.length < 1 || payload.tickets.length > 1000) throw new BadRequestException('Prévia inválida.');
+    if (payload.version !== 1 || !Array.isArray(payload.tickets) || payload.tickets.length < 1 || payload.tickets.length > 2500) throw new BadRequestException('Prévia inválida.');
     if (payload.expiresAt <= Date.now()) throw new GoneException('A prévia expirou. Gere uma nova.');
     return payload;
   }

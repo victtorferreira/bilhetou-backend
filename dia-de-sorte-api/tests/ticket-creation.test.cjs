@@ -7,7 +7,7 @@ const { allowedOrigins } = require('../dist/security/origins');
 
 test('generator validates quantities and serial prefixes', () => {
   const base = { quantity: 1, prefix: 'BIL', uniqueNumbers: false };
-  for (const quantity of [0, -1, 1.2, 1001, NaN]) assert.throws(() => generateTickets({ ...base, quantity }, []));
+  for (const quantity of [0, -1, 1.2, 2501, NaN]) assert.throws(() => generateTickets({ ...base, quantity }, []));
   for (const prefix of ['', '12', 'A'.repeat(13), '=formula', 'A B']) assert.throws(() => generateTickets({ ...base, prefix }, []));
 });
 
@@ -37,6 +37,89 @@ test('generator refuses stock overflow and exhausted serial prefix', () => {
   const base = { quantity: 1, prefix: 'BIL', uniqueNumbers: false };
   assert.throws(() => generateTickets(base, [{ serial: 'BIL-999999', numbers: [] }]));
   assert.throws(() => generateTickets(base, Array.from({ length: 5000 }, (_, i) => ({ serial: `T-${i}`, numbers: [] }))));
+});
+
+test('a full batch covers all 10000 numbers exactly once and respects existing stock', () => {
+  const input = { quantity: 2500, prefix: 'BIL', uniqueNumbers: true };
+  const batch = generateTickets(input, []);
+  assert.equal(batch.length, 2500);
+  assert.equal(batch[2499].serial, 'BIL-002500');
+  const numbers = batch.flatMap(ticket => ticket.numbers);
+  assert.equal(numbers.length, 10000); assert.equal(new Set(numbers).size, 10000);
+  assert.ok(numbers.includes('0000')); assert.ok(numbers.includes('9999'));
+  const stock = [{ serial: 'BIL-000001', numbers: ['0000', '0001', '0002', '0003'].map(value => ({ value })) }];
+  assert.throws(() => generateTickets(input, stock), /2.500/);
+  assert.equal(generateTickets({ ...input, quantity: 2499 }, stock).length, 2499);
+});
+
+test('HTTP accepts and confirms 2500 tickets with the longest prefix within existing payload limits', async () => {
+  require('reflect-metadata');
+  const { Module, ValidationPipe } = require('@nestjs/common');
+  const { NestFactory } = require('@nestjs/core');
+  const { AdminTicketsController } = require('../dist/tickets/admin.controller');
+  const { AdminTicketService } = require('../dist/tickets/admin-ticket.service');
+  const { TicketCreationService } = require('../dist/tickets/ticket-creation.service');
+  const { configureHttpSecurity } = require('../dist/security/http-security');
+  const previous = { key: process.env.ADMIN_ACCESS_KEY, org: process.env.ADMIN_ORGANIZATION_ID };
+  const organizationId = randomUUID(), campaignId = randomUUID();
+  process.env.ADMIN_ACCESS_KEY = 'a'.repeat(40); process.env.ADMIN_ORGANIZATION_ID = organizationId;
+  const tickets = [], numbers = [];
+  const tx = {
+    $queryRaw: async () => [],
+    campaign: { findUnique: async () => ({ id: campaignId, organizationId, status: 'OPEN' }) },
+    ticket: {
+      count: async () => tickets.length,
+      findMany: async ({ where }) => where.id ? tickets.filter(t => where.id.in.includes(t.id)) : tickets,
+      findFirst: async () => null,
+      createMany: async ({ data }) => { tickets.push(...data); return { count: data.length }; },
+    },
+    ticketNumber: {
+      findFirst: async () => null,
+      createMany: async ({ data }) => { numbers.push(...data); return { count: data.length }; },
+    },
+  };
+  const creation = new TicketCreationService({ $transaction: async cb => cb(tx) });
+  const sessions = new AdminSessionStore();
+  const auth = new AdminAuth(sessions);
+  const token = auth.login(process.env.ADMIN_ACCESS_KEY, 'full-batch-test');
+  class TestModule {}
+  Module({ controllers: [AdminTicketsController], providers: [
+    { provide: AdminAuth, useValue: auth },
+    { provide: AdminSessionStore, useValue: sessions },
+    { provide: AdminTicketService, useValue: { campaign: async (org, id) => { assert.equal(org, organizationId); assert.equal(id, campaignId); } } },
+    { provide: TicketCreationService, useValue: creation },
+  ] })(TestModule);
+  const app = await NestFactory.create(TestModule, { logger: false, bodyParser: false, abortOnError: false });
+  configureHttpSecurity(app);
+  app.setGlobalPrefix('api');
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  await app.listen(0, '127.0.0.1');
+  try {
+    const base = `${await app.getUrl()}/api/admin/ticket-batches`;
+    const post = async (path, body) => {
+      const response = await fetch(`${base}/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', Cookie: `bilhetou_admin=${token}` }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    const input = { campaignId, quantity: 2500, prefix: 'ABCDEFGHIJKL', uniqueNumbers: true };
+    assert.equal((await post('preview', { ...input, quantity: 2501 })).status, 400);
+    const preview = await post('preview', input);
+    assert.equal(preview.status, 201); assert.equal(preview.body.tickets.length, 2500);
+    assert.ok(preview.body.token.length < 400000);
+    assert.ok(Buffer.byteLength(JSON.stringify({ token: preview.body.token })) < 512 * 1024);
+    assert.equal(tickets.length, 0);
+    const confirmed = await post('confirm', { token: preview.body.token });
+    assert.equal(confirmed.status, 201); assert.equal(confirmed.body.created, 2500);
+    assert.equal(tickets.length, 2500); assert.equal(numbers.length, 10000);
+    assert.equal(new Set(numbers.map(n => n.value)).size, 10000);
+    const replay = await post('confirm', { token: preview.body.token });
+    assert.equal(replay.status, 201); assert.equal(replay.body.replayed, true);
+    assert.equal(tickets.length, 2500);
+    assert.equal((await post('preview', { ...input, quantity: 1 })).status, 409);
+  } finally {
+    await app.close();
+    if (previous.key === undefined) delete process.env.ADMIN_ACCESS_KEY; else process.env.ADMIN_ACCESS_KEY = previous.key;
+    if (previous.org === undefined) delete process.env.ADMIN_ORGANIZATION_ID; else process.env.ADMIN_ORGANIZATION_ID = previous.org;
+  }
 });
 
 test('production permits only configured origins and administration rejects anonymous writes', () => {
@@ -100,14 +183,15 @@ test('PostgreSQL + HTTP: validation, atomic creation, replay, concurrent conflic
     assert.equal(await prisma.ticket.count({ where: { campaignId: campaign.id } }), 4);
     assert.equal(await prisma.ticketNumber.count({ where: { ticket: { campaignId: campaign.id } } }), 16);
 
-    const big = await request('/ticket-batches/preview', { ...input, prefix: 'BIG', quantity: 1000, uniqueNumbers: false });
+    const big = await request('/ticket-batches/preview', { ...input, prefix: 'BIG', quantity: 2496, uniqueNumbers: false });
     assert.equal(big.status, 201);
     assert.ok(big.body.token.length > 100000);
     assert.equal((await request('/ticket-batches/confirm', { token: big.body.token })).status, 201);
     const page = await request(`/campaigns/${campaign.id}/tickets?page=2`);
     assert.equal(page.status, 200);
     assert.equal(page.body.items.length, 20);
-    assert.equal(page.body.total, 1004);
+    assert.equal(page.body.total, 2500);
+    assert.equal((await request('/ticket-batches/preview', { ...input, quantity: 1 })).status, 409);
     const search = await request(`/campaigns/${campaign.id}/tickets?query=BIL-000001`);
     assert.equal(search.body.total, 1);
     const list = await request('/campaigns');
