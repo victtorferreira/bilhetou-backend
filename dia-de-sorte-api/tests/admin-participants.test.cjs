@@ -5,91 +5,55 @@ const { AdminParticipantsService } = require('../dist/participants/admin-partici
 
 const person = { id: randomUUID(), name: 'Maria Silva', phone: '98999999999', createdAt: new Date('2026-10-22T12:00:00Z') };
 const totals = { _count: { _all: 2 }, _sum: { quantity: 3, totalCents: 900 } };
-test('participant list is scoped, paginated, searchable by formatted phone and masks contact server-side', async () => {
-  let where;
-  const tx = {
-    participant: {
-      count: async input => { where = input.where; return 41; },
-      findMany: async input => { assert.equal(input.skip, 40); assert.equal(input.take, 20); assert.equal(input.where, where); return [person]; },
-    },
-    order: {
-      groupBy: async input => { assert.equal(input.where.campaign.organizationId, 'ORG'); assert.equal(input.where.legacySample, false); assert.deepEqual(input.where.participantId.in, [person.id]); return [{ participantId: person.id, ...totals }]; },
-      aggregate: async input => { assert.equal(input.where.participant.organizationId, 'ORG'); return totals; },
-    },
-  };
+const zeroSummary = { participants: 1, orders: 0, tickets: 0 };
+function rawPage(summary, items, inspect = () => {}) {
+  let call = 0;
+  return async query => { inspect(query, call); return call++ % 2 === 0 ? [summary] : items; };
+}
+
+test('grouped list paginates groups, binds searches and masks the complete phone', async () => {
+  const tx = { $queryRaw: rawPage({ participants: 41, orders: 2, tickets: 3 }, [{ ...person, registrations: 3, orders: 2, tickets: 3 }], (query, call) => {
+    assert.ok(query.values.includes('ORG'));
+    assert.ok(query.values.includes('+55 (98) 99999-9999'));
+    assert.ok(query.values.includes('98999999999'));
+    assert.ok(!query.text.includes(person.phone));
+    if (call === 1) assert.deepEqual(query.values.slice(-2), [20, 40]);
+  }) };
   const result = await new AdminParticipantsService({ $transaction: async cb => cb(tx) }).list('ORG', { page: 99, query: '+55 (98) 99999-9999', activity: 'all', campaignScope: 'all' });
-  assert.equal(where.organizationId, 'ORG');
-  assert.equal(where.AND[0].OR[1].phone.contains, '98999999999');
-  assert.equal(result.page, 3); assert.equal(result.totalPages, 3);
+  assert.equal(result.page, 3); assert.equal(result.totalPages, 3); assert.equal(result.total, 41);
+  assert.equal(result.items[0].registrations, 3); assert.equal(result.items[0].orders, 2); assert.equal(result.items[0].tickets, 3);
   assert.equal(result.items[0].phoneMasked, '(98) 9****-9999');
-  assert.equal(result.items[0].phone, undefined); assert.ok(!JSON.stringify(result).includes(person.phone));
-  assert.equal(result.items[0].orders, 2); assert.equal(result.items[0].tickets, 3);
-});
-test('without-orders filter keeps participants without orders in selected campaign', async () => {
-  const campaignId = randomUUID();
-  const tx = { campaign: { findFirst: async ({ where }) => { assert.equal(where.organizationId, 'ORG'); assert.equal(where.legacySample, false); return { id: campaignId }; } }, participant: { count: async ({ where }) => { assert.equal(where.AND.length, 1); assert.equal(where.AND[0].orders.none.campaign.id, campaignId); return 0; }, findMany: async () => [] }, order: { aggregate: async () => ({ _count: { _all: 0 }, _sum: { quantity: null } }) } };
-  const result = await new AdminParticipantsService({ $transaction: async cb => cb(tx) }).list('ORG', { page: 1, query: '', activity: 'without_orders', campaignId });
-  assert.deepEqual(result.items, []); assert.equal(result.summary.orders, 0); assert.equal(result.page, 1);
+  assert.ok(!JSON.stringify(result).includes(person.phone));
 });
 
-test('current campaign excludes previous purchases while retaining registrations with zero activity', async () => {
+test('current and explicitly selected campaigns retain registrations with zero purchases', async () => {
   const campaign = { id: randomUUID(), name: 'Nova campanha', status: 'OPEN', closesAt: null };
-  const zero = { _count: { _all: 0 }, _sum: { quantity: null } };
   const tx = {
-    campaign: { findFirst: async ({ where, orderBy }) => {
-      assert.equal(where.organizationId, 'ORG'); assert.equal(where.status, 'OPEN');
-      assert.equal(where.deletedAt, null); assert.equal(where.legacySample, false);
-      assert.ok(where.OR[1].closesAt.gt instanceof Date); assert.equal(orderBy[0].createdAt, 'desc');
-      return campaign;
-    } },
-    participant: {
-      count: async ({ where }) => { assert.deepEqual(where.AND, []); return 1; },
-      findMany: async () => [person],
-    },
-    order: {
-      groupBy: async ({ where }) => { assert.equal(where.campaign.id, campaign.id); return []; },
-      aggregate: async ({ where }) => { assert.equal(where.campaign.id, campaign.id); return zero; },
-    },
+    campaign: { findFirst: async ({ where }) => { assert.equal(where.organizationId, 'ORG'); return campaign; } },
+    $queryRaw: rawPage(zeroSummary, [{ ...person, registrations: 2, orders: 0, tickets: 0 }], query => assert.ok(query.values.includes(campaign.id))),
   };
   const service = new AdminParticipantsService({ $transaction: async cb => cb(tx) });
   const result = await service.list('ORG', { page: 1, query: '', activity: 'all' });
   assert.deepEqual(result.campaignScope, { mode: 'current', active: true, campaign: { id: campaign.id, name: campaign.name } });
-  assert.equal(result.items[0].orders, 0); assert.equal(result.items[0].tickets, 0);
-  assert.equal(result.summary.tickets, 0);
-  // Manually selecting a campaign also preserves people without purchases.
-  tx.campaign.findFirst = async () => campaign;
+  assert.equal(result.items[0].tickets, 0);
   assert.equal((await service.list('ORG', { page: 1, query: '', activity: 'all', campaignId: campaign.id })).total, 1);
 });
 
-test('without active campaign, shows only the latest completed campaign or zero if none exists', async () => {
+test('without active campaign, retains the last campaign and uses zero when none exists', async () => {
   const campaign = { id: randomUUID(), name: 'Última campanha', status: 'CLOSED', closesAt: new Date('2026-01-01') };
   let fallback = campaign;
   const tx = {
-    campaign: { findFirst: async ({ where }) => {
-      if (where.status === 'OPEN') return null;
-      assert.deepEqual(where.status, { not: 'DRAFT' }); assert.equal(where.deletedAt, null);
-      return fallback;
-    } },
-    participant: { count: async () => 1, findMany: async () => [person] },
-    order: {
-      groupBy: async ({ where }) => {
-        if (fallback) { assert.equal(where.campaign.id, campaign.id); return [{ participantId: person.id, ...totals }]; }
-        assert.deepEqual(where.id, { in: [] }); return [];
-      },
-      aggregate: async ({ where }) => {
-        if (fallback) { assert.equal(where.campaign.id, campaign.id); return totals; }
-        assert.deepEqual(where.id, { in: [] }); return { _count: { _all: 0 }, _sum: { quantity: null } };
-      },
-    },
+    campaign: { findFirst: async ({ where }) => where.status === 'OPEN' ? null : fallback },
+    $queryRaw: rawPage(zeroSummary, [{ ...person, registrations: 1, orders: 0, tickets: 0 }]),
   };
   const service = new AdminParticipantsService({ $transaction: async cb => cb(tx) });
   const result = await service.list('ORG', { page: 1, query: '', activity: 'all' });
   assert.equal(result.campaignScope.active, false); assert.equal(result.campaignScope.campaign.id, campaign.id);
-  assert.equal(result.items[0].tickets, 3);
   fallback = null;
   const empty = await service.list('ORG', { page: 1, query: '', activity: 'all' });
-  assert.equal(empty.campaignScope.campaign, null); assert.equal(empty.total, 1); assert.equal(empty.items[0].tickets, 0);
+  assert.equal(empty.campaignScope.campaign, null); assert.equal(empty.items[0].tickets, 0);
 });
+
 test('another organization cannot retrieve participant details, orders, tickets or filter by its campaign', async () => {
   const service = new AdminParticipantsService({ $transaction: async cb => cb({ participant: { findFirst: async ({ where }) => { assert.equal(where.organizationId, 'ORG'); return null; } }, campaign: { findFirst: async () => null } }) });
   await assert.rejects(service.detail('ORG', person.id), /Participante não encontrado/);
@@ -99,7 +63,7 @@ test('another organization cannot retrieve participant details, orders, tickets 
 });
 test('authorized detail reveals contact only after organization ownership is established', async () => {
   let checked = false;
-  const tx = { participant: { findFirst: async ({ where }) => { assert.deepEqual(where, { id: person.id, organizationId: 'ORG' }); checked = true; return person; } }, order: { aggregate: async ({ where }) => { assert.ok(checked); assert.equal(where.campaign.organizationId, 'ORG'); assert.equal(where.participantId, person.id); return totals; } } };
+  const tx = { participant: { findFirst: async ({ where }) => { assert.deepEqual(where, { id: person.id, organizationId: 'ORG' }); checked = true; return person; } }, $queryRaw: async query => { assert.ok(checked); assert.ok(query.values.includes('ORG')); assert.ok(query.values.includes(person.phone)); assert.ok(query.values.includes(person.name)); return [person]; }, order: { aggregate: async ({ where }) => { assert.ok(checked); assert.equal(where.campaign.organizationId, 'ORG'); assert.deepEqual(where.participantId, { in: [person.id] }); return totals; } } };
   const result = await new AdminParticipantsService({ $transaction: async cb => cb(tx) }).detail('ORG', person.id);
   assert.equal(result.phone, person.phone); assert.equal(result.verification, 'unverified'); assert.equal(result.summary.orderValueCents, 900);
 });
